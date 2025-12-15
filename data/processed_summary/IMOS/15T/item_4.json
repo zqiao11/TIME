@@ -1,0 +1,251 @@
+{
+    "_meta": {
+        "inferred_freq": "15T",
+        "min_length": 2880,
+        "n_rows": 18759,
+        "n_cols": 6,
+        "shape": [
+            18759,
+            6
+        ],
+        "original_columns": [
+            "CNDC",
+            "DOX2",
+            "PSAL",
+            "TEMP",
+            "TURB",
+            "CPHL"
+        ],
+        "kept_columns": [
+            "CNDC[rw]",
+            "DOX2",
+            "PSAL[rw]",
+            "TEMP[rw]",
+            "TURB",
+            "CPHL"
+        ],
+        "dropped_columns": [],
+        "spike_presence_columns": [],
+        "random_walk_columns": [
+            "CNDC[rw]",
+            "PSAL[rw]",
+            "TEMP[rw]"
+        ],
+        "output_path": "./data/processed_csv/IMOS/15T/item_4.csv"
+    },
+    "CNDC": {
+        "predictable": true,
+        "checks": [
+            "Data type check ✅ Passed (dtype=float64)",
+            "Length check ✅ Passed (length=18759)",
+            "Missing rate ✅ Passed missing_rate=0.00%)",
+            "Timestamp stability ✅ Passed (monotonic=True)",
+            "Constant series ✅ Passed (topk_dominance=0.06%, entropy=1.00)",
+            "White noise test ✅ Passed (p=0.0)",
+            "Random walk test ⚠️ Random Walk [rw] (adf_p=0.8896)",
+            "Outlier check ✅ Passed (unchanged [rw]) (transient_spike=0.44%, extreme_outlier=0.00%)"
+        ],
+        "has_spike_presence": false,
+        "is_random_walk": true,
+        "outlier_stats": {
+            "transient_spike_ratio": 0.44,
+            "extreme_outlier_ratio": 0.0,
+            "transient_spike_count": 83,
+            "extreme_outlier_count": 0,
+            "k_transient": 3.0,
+            "k_extreme": 9.0,
+            "window_size": 1875,
+            "action": "unchanged",
+            "cleaned_count": 0
+        }
+    },
+    "DOX2": {
+        "predictable": true,
+        "checks": [
+            "Data type check ✅ Passed (dtype=float64)",
+            "Length check ✅ Passed (length=18759)",
+            "Missing rate ✅ Passed missing_rate=0.00%)",
+            "Timestamp stability ✅ Passed (monotonic=True)",
+            "Constant series ✅ Passed (topk_dominance=0.05%, entropy=1.00)",
+            "White noise test ✅ Passed (p=0.0)",
+            "Random walk test ✅ Stationary (adf_p=0.0)",
+            "Outlier check ✅ Passed (unchanged) (transient_spike=0.01%, extreme_outlier=0.00%)"
+        ],
+        "has_spike_presence": false,
+        "is_random_walk": false,
+        "outlier_stats": {
+            "transient_spike_ratio": 0.01,
+            "extreme_outlier_ratio": 0.0,
+            "transient_spike_count": 2,
+            "extreme_outlier_count": 0,
+            "k_transient": 3.0,
+            "k_extreme": 9.0,
+            "window_size": 1875,
+            "action": "unchanged",
+            "cleaned_count": 0
+        }
+    },
+    "PSAL": {
+        "predictable": true,
+        "checks": [
+            "Data type check ✅ Passed (dtype=float64)",
+            "Length check ✅ Passed (length=18759)",
+            "Missing rate ✅ Passed missing_rate=0.00%)",
+            "Timestamp stability ✅ Passed (monotonic=True)",
+            "Constant series ✅ Passed (topk_dominance=0.05%, entropy=1.00)",
+            "White noise test ✅ Passed (p=0.0)",
+            "Random walk test ⚠️ Random Walk [rw] (adf_p=1.0)",
+            "Outlier check ✅ Passed (cleaned [rw]) (transient_spike=0.22%, extreme_outlier=0.01%)"
+        ],
+        "has_spike_presence": false,
+        "is_random_walk": true,
+        "outlier_stats": {
+            "transient_spike_ratio": 0.22,
+            "extreme_outlier_ratio": 0.01,
+            "transient_spike_count": 41,
+            "extreme_outlier_count": 2,
+            "k_transient": 3.0,
+            "k_extreme": 9.0,
+            "window_size": 1875,
+            "action": "cleaned",
+            "cleaned_count": 2
+        }
+    },
+    "TEMP": {
+        "predictable": true,
+        "checks": [
+            "Data type check ✅ Passed (dtype=float64)",
+            "Length check ✅ Passed (length=18759)",
+            "Missing rate ✅ Passed missing_rate=0.00%)",
+            "Timestamp stability ✅ Passed (monotonic=True)",
+            "Constant series ✅ Passed (topk_dominance=0.07%, entropy=1.00)",
+            "White noise test ✅ Passed (p=0.0)",
+            "Random walk test ⚠️ Random Walk [rw] (adf_p=0.4917)",
+            "Outlier check ✅ Passed (unchanged [rw]) (transient_spike=0.48%, extreme_outlier=0.00%)"
+        ],
+        "has_spike_presence": false,
+        "is_random_walk": true,
+        "outlier_stats": {
+            "transient_spike_ratio": 0.48,
+            "extreme_outlier_ratio": 0.0,
+            "transient_spike_count": 90,
+            "extreme_outlier_count": 0,
+            "k_transient": 3.0,
+            "k_extreme": 9.0,
+            "window_size": 1875,
+            "action": "unchanged",
+            "cleaned_count": 0
+        }
+    },
+    "TURB": {
+        "predictable": true,
+        "checks": [
+            "Data type check ✅ Passed (dtype=float64)",
+            "Length check ✅ Passed (length=18759)",
+            "Missing rate ✅ Passed missing_rate=0.00%)",
+            "Timestamp stability ✅ Passed (monotonic=True)",
+            "Constant series ✅ Passed (topk_dominance=4.39%, entropy=0.91)",
+            "White noise test ✅ Passed (p=0.0)",
+            "Random walk test ✅ Stationary (adf_p=0.0)",
+            "Outlier check ✅ Passed (cleaned) (transient_spike=0.85%, extreme_outlier=0.21%)"
+        ],
+        "has_spike_presence": false,
+        "is_random_walk": false,
+        "outlier_stats": {
+            "transient_spike_ratio": 0.85,
+            "extreme_outlier_ratio": 0.21,
+            "transient_spike_count": 160,
+            "extreme_outlier_count": 40,
+            "k_transient": 3.0,
+            "k_extreme": 9.0,
+            "window_size": 1875,
+            "action": "cleaned",
+            "cleaned_count": 40
+        }
+    },
+    "CPHL": {
+        "predictable": true,
+        "checks": [
+            "Data type check ✅ Passed (dtype=float64)",
+            "Length check ✅ Passed (length=18759)",
+            "Missing rate ✅ Passed missing_rate=0.00%)",
+            "Timestamp stability ✅ Passed (monotonic=True)",
+            "Constant series ✅ Passed (topk_dominance=7.52%, entropy=0.87)",
+            "White noise test ✅ Passed (p=0.0)",
+            "Random walk test ✅ Stationary (adf_p=0.0)",
+            "Outlier check ✅ Passed (cleaned) (transient_spike=0.22%, extreme_outlier=0.26%)"
+        ],
+        "has_spike_presence": false,
+        "is_random_walk": false,
+        "outlier_stats": {
+            "transient_spike_ratio": 0.22,
+            "extreme_outlier_ratio": 0.26,
+            "transient_spike_count": 42,
+            "extreme_outlier_count": 48,
+            "k_transient": 3.0,
+            "k_extreme": 9.0,
+            "window_size": 1875,
+            "action": "cleaned",
+            "cleaned_count": 48
+        }
+    },
+    "multivariate": {
+        "correlation_duplicates": [
+            [
+                "CNDC[rw]",
+                "TEMP[rw]",
+                0.9961
+            ]
+        ],
+        "correlation_matrix": {
+            "CNDC[rw]": {
+                "CNDC[rw]": 1.0,
+                "DOX2": -0.8961553873463951,
+                "PSAL[rw]": 0.7794775807324216,
+                "TEMP[rw]": 0.9961399823506,
+                "TURB": -0.08121909292227733,
+                "CPHL": -0.01664265438433329
+            },
+            "DOX2": {
+                "CNDC[rw]": -0.8961553873463951,
+                "DOX2": 1.0,
+                "PSAL[rw]": -0.5076305129113091,
+                "TEMP[rw]": -0.9197371866873578,
+                "TURB": -0.06477663728078638,
+                "CPHL": -0.07347959816874618
+            },
+            "PSAL[rw]": {
+                "CNDC[rw]": 0.7794775807324216,
+                "DOX2": -0.5076305129113091,
+                "PSAL[rw]": 1.0,
+                "TEMP[rw]": 0.721603573539484,
+                "TURB": -0.1295955685803895,
+                "CPHL": -0.040652694999433636
+            },
+            "TEMP[rw]": {
+                "CNDC[rw]": 0.9961399823506,
+                "DOX2": -0.9197371866873578,
+                "PSAL[rw]": 0.721603573539484,
+                "TEMP[rw]": 1.0,
+                "TURB": -0.07143106783750032,
+                "CPHL": -0.012701166523501494
+            },
+            "TURB": {
+                "CNDC[rw]": -0.08121909292227733,
+                "DOX2": -0.06477663728078638,
+                "PSAL[rw]": -0.1295955685803895,
+                "TEMP[rw]": -0.07143106783750032,
+                "TURB": 1.0,
+                "CPHL": 0.6413112720994251
+            },
+            "CPHL": {
+                "CNDC[rw]": -0.01664265438433329,
+                "DOX2": -0.07347959816874618,
+                "PSAL[rw]": -0.040652694999433636,
+                "TEMP[rw]": -0.012701166523501494,
+                "TURB": 0.6413112720994251,
+                "CPHL": 1.0
+            }
+        }
+    }
+}

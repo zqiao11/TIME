@@ -1,0 +1,88 @@
+# =============================================================================
+# Dataset Configuration for TimeBench
+# =============================================================================
+# 每个数据集配置:
+#   - test_split: 测试集占比 (所有 term 共享)
+#   - val_split: 验证集占比 (所有 term 共享，可选)
+#   - prediction_length: 不同 term 的预测长度
+#
+# windows 会根据 test_split 和 prediction_length 自动计算:
+#   windows = ceil(test_split * min_series_length / prediction_length)
+# val_windows 会根据 val_split 和 prediction_length 自动计算:
+#   val_windows = ceil(val_split * min_series_length / prediction_length)
+#
+# 这样确保不同 term 在相同的 test/val 区间上评估，保证公平比较
+# =============================================================================
+
+# 默认配置 (用于未明确配置的数据集)
+defaults:
+  test_split: 0.1  # 默认测试集占比 10%
+  val_split: 0.1  # 默认验证集占比 10%
+
+  # 根据频率的默认 prediction_length 基数
+  pred_length_by_freq:
+    M: 12    # Monthly
+    W: 8     # Weekly
+    D: 30    # Daily
+    H: 48    # Hourly
+    T: 48    # Minutely
+    S: 60    # Secondly
+
+  # term 的乘数
+  term_multipliers:
+    short: 1
+    medium: 10
+    long: 15
+
+# =============================================================================
+# 数据集特定配置
+# =============================================================================
+# 格式:
+# dataset_name/freq:
+#   test_split: <float>      # 测试集占比 (所有 term 共享)
+#   val_split: <float>       # 验证集占比 (所有 term 共享，可选)
+#   short:
+#     prediction_length: <int>
+#   medium:
+#     prediction_length: <int>
+#   long:
+#     prediction_length: <int>
+#
+# windows 和 val_windows 自动计算，无需手动设置
+# =============================================================================
+
+datasets:
+  # ----- GIFT-Eval 官方数据集示例 -----
+
+  bitbrains_rnd/5T:
+    test_split: 0.1
+    short:
+      prediction_length: 48     # 48 * 5min = 4 hours
+    medium:
+      prediction_length: 288    # 288 * 5min = 24 hours
+    long:
+      prediction_length: 576    # 576 * 5min = 48 hours
+
+  # ----- 自定义数据集示例 -----
+
+  IMOS/15T:
+    test_split: 0.1
+    val_split: 0.1 
+    short:
+      prediction_length: 16     # 16 * 15min = 4 hours
+    medium:
+      prediction_length: 96    # 96 * 15min = 1 day
+    long:
+      prediction_length: 672   # 672 * 15min = 7 days
+
+  # ----- 更多数据集配置示例 -----
+  # example_dataset/H:
+  #   test_split: 0.15          # 该数据集使用 15% 作为测试集
+  #   val_split: 0.1            # 该数据集使用 10% 作为验证集
+  #   short:
+  #     prediction_length: 24   # 24 hours
+  #   medium:
+  #     prediction_length: 168  # 7 days
+  #   long:
+  #     prediction_length: 720  # 30 days
+

@@ -1,0 +1,25 @@
+{
+  "dataset_config": "IMOS/15T/long",
+  "num_series": 7,
+  "num_windows": 2,
+  "num_variates": 6,
+  "prediction_length": 672,
+  "num_samples": 100,
+  "freq": "15T",
+  "seasonality": 96,
+  "context_length": 4000,
+  "metric_names": [
+    "MSE",
+    "MAE",
+    "RMSE",
+    "MAPE",
+    "sMAPE",
+    "MASE",
+    "ND",
+    "QuantileLoss_0.1",
+    "QuantileLoss_0.5",
+    "QuantileLoss_0.9",
+    "CRPS"
+  ],
+  "patch_size": 32
+}

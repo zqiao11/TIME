@@ -1,0 +1,339 @@
+{
+    "dataset": "IMOS",
+    "freq": "15T",
+    "num_series": 7,
+    "success_count": 7,
+    "variates": {
+        "CNDC": {
+            "total": 7,
+            "kept": 7,
+            "rw": 5,
+            "sp": 0,
+            "kept_ratio": 1.0,
+            "rw_ratio": 0.7143,
+            "sp_ratio": 0.0
+        },
+        "DOX2": {
+            "total": 7,
+            "kept": 7,
+            "rw": 1,
+            "sp": 0,
+            "kept_ratio": 1.0,
+            "rw_ratio": 0.1429,
+            "sp_ratio": 0.0
+        },
+        "PSAL": {
+            "total": 7,
+            "kept": 7,
+            "rw": 4,
+            "sp": 0,
+            "kept_ratio": 1.0,
+            "rw_ratio": 0.5714,
+            "sp_ratio": 0.0
+        },
+        "TEMP": {
+            "total": 7,
+            "kept": 7,
+            "rw": 6,
+            "sp": 0,
+            "kept_ratio": 1.0,
+            "rw_ratio": 0.8571,
+            "sp_ratio": 0.0
+        },
+        "TURB": {
+            "total": 7,
+            "kept": 7,
+            "rw": 1,
+            "sp": 0,
+            "kept_ratio": 1.0,
+            "rw_ratio": 0.1429,
+            "sp_ratio": 0.0
+        },
+        "CPHL": {
+            "total": 7,
+            "kept": 7,
+            "rw": 0,
+            "sp": 0,
+            "kept_ratio": 1.0,
+            "rw_ratio": 0.0,
+            "sp_ratio": 0.0
+        }
+    },
+    "correlation_duplicates": {
+        "CNDC <-> DOX2": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.4845,
+            "avg_corr_all": -0.4845,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "CNDC <-> PSAL": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": 0.2766,
+            "avg_corr_all": 0.2766,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "CNDC <-> TEMP": {
+            "high_count": 4,
+            "total_count": 7,
+            "high_ratio": 0.5714,
+            "avg_corr_high": 0.9905,
+            "avg_corr_low": 0.7181,
+            "avg_corr_all": 0.8737,
+            "high_series": [
+                "item_2.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "CNDC <-> TURB": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.086,
+            "avg_corr_all": -0.086,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "CNDC <-> CPHL": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.0151,
+            "avg_corr_all": -0.0151,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "DOX2 <-> PSAL": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.3319,
+            "avg_corr_all": -0.3319,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "DOX2 <-> TEMP": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.4195,
+            "avg_corr_all": -0.4195,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "DOX2 <-> TURB": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.2215,
+            "avg_corr_all": -0.2215,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "CPHL <-> DOX2": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.0995,
+            "avg_corr_all": -0.0995,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "PSAL <-> TEMP": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.0251,
+            "avg_corr_all": -0.0251,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "PSAL <-> TURB": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": 0.0075,
+            "avg_corr_all": 0.0075,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "CPHL <-> PSAL": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": 0.0496,
+            "avg_corr_all": 0.0496,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "TEMP <-> TURB": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.0887,
+            "avg_corr_all": -0.0887,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "CPHL <-> TEMP": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": -0.0048,
+            "avg_corr_all": -0.0048,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        },
+        "CPHL <-> TURB": {
+            "high_count": 0,
+            "total_count": 7,
+            "high_ratio": 0.0,
+            "avg_corr_high": null,
+            "avg_corr_low": 0.4517,
+            "avg_corr_all": 0.4517,
+            "high_series": [],
+            "all_series": [
+                "item_0.csv",
+                "item_1.csv",
+                "item_2.csv",
+                "item_3.csv",
+                "item_4.csv",
+                "item_5.csv",
+                "item_6.csv"
+            ]
+        }
+    }
+}

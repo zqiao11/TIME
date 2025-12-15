@@ -1,0 +1,92 @@
+[build-system]
+# 🔒 Ensure we use a new enough version of hatchling that supports this feature well
+requires = ["hatchling>=1.18.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "timebench"
+version = "0.1.0"
+description = "TIME: A Comprehensive Time Series Forecasting Benchmark Framework"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Zhongzheng Qiao"},
+]
+keywords = [
+    "time series",
+    "forecasting",
+    "benchmark",
+    "evaluation",
+    "deep learning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+  "pandas>=2.0.0",
+  "gluonts~=0.15.1",
+  "numpy~=1.26.0",
+  "einops==0.7.*",
+  "python-dotenv==1.0.0",
+  "hydra-core==1.3",
+  "datasets~=2.17.1",
+  "orjson",
+  "matplotlib~=3.9.2",
+  "tsfeatures",
+  "ray",
+  "scipy~=1.11.3",
+]
+
+[project.optional-dependencies]
+# Development dependencies
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "isort>=5.12",
+    "ruff>=0.1.0",
+    "ipykernel",
+]
+
+# All optional dependencies
+all = [
+    "timebench[dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/TIME"
+Repository = "https://github.com/yourusername/TIME"
+
+# --- Hatch Specific Configurations ---
+
+[tool.hatch.version]
+path = "src/timebench/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/timebench"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/configs",
+]
+
+# --- Tool Configurations ---
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
