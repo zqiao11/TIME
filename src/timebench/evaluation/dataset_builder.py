@@ -15,6 +15,7 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Union
 
+import argparse
 import numpy as np
 import pandas as pd
 from datasets import Dataset, Features, Sequence, Value
@@ -22,7 +23,7 @@ from datasets import Dataset, Features, Sequence, Value
 
 def dataframes_to_generator(
     dfs: Union[pd.DataFrame, List[pd.DataFrame]],
-    freq: str = "D",
+    freq: Optional[str] = None,
     to_univariate: bool = False,
     item_prefix: str = "",
     num_dims: Optional[int] = None,
@@ -37,8 +38,10 @@ def dataframes_to_generator(
     dfs : Union[pd.DataFrame, List[pd.DataFrame]]
         One or a list of DataFrames. Each DataFrame must have a datetime index
         (or first column as timestamp) and one or more value columns.
-    freq : str
-        Fallback frequency if pd.infer_freq() fails.
+    freq : str, optional
+        If provided, this frequency string is used directly for all items.
+        If None, the frequency is inferred from the datetime index; if inference
+        fails, a ValueError is raised.
     to_univariate : bool
         If True: each column of each DataFrame becomes a separate item (UTS mode)
         If False: each DataFrame becomes a single multivariate item (MTS mode)
@@ -104,7 +107,20 @@ def dataframes_to_generator(
                 df = df.set_index(df.columns[0])
 
             col_names = df.columns.tolist()
-            infer_freq = pd.infer_freq(df.index) or freq
+
+            # Determine frequency:
+            # - if freq is provided, use it directly (higher priority than infer)
+            # - otherwise, try to infer; if inference fails, raise an error
+            if freq is not None:
+                effective_freq = freq
+            else:
+                inferred = pd.infer_freq(df.index)
+                if inferred is None:
+                    raise ValueError(
+                        "Could not infer frequency from datetime index. "
+                        "Please provide freq explicitly."
+                    )
+                effective_freq = inferred
 
             if to_univariate:
                 # Each variate is one item
@@ -112,7 +128,7 @@ def dataframes_to_generator(
                     item = {
                         "item_id": f"{item_prefix}_{df_idx}_{col}",
                         "start": df.index[0],
-                        "freq": infer_freq,
+                        "freq": effective_freq,
                         "target": df[col].to_numpy(dtype=np.float32),
                     }
                     yield item
@@ -122,7 +138,7 @@ def dataframes_to_generator(
                 item = {
                     "item_id": f"{item_prefix}{df_idx}",
                     "start": df.index[0],
-                    "freq": infer_freq,
+                    "freq": effective_freq,
                     "target": target,
                 }
                 if include_past_feat and num_past_feat > 0:
@@ -139,7 +155,7 @@ def build_dataset_from_csvs(
     csv_dir: Union[str, Path],
     output_path: Union[str, Path],
     pattern: str = "*.csv",
-    freq: str = "D",
+    freq: Optional[str] = None,
     to_univariate: bool = False,
     item_prefix: str = "",
     include_past_feat: bool = False,
@@ -156,8 +172,10 @@ def build_dataset_from_csvs(
         Where to save the resulting dataset.
     pattern : str
         Glob pattern to match CSV files.
-    freq : str
-        Time frequency.
+    freq : str, optional
+        Time frequency. If provided, overrides automatic frequency inference.
+        If None, the frequency is inferred from the datetime index; if
+        inference fails, a ValueError is raised.
     to_univariate : bool
         Convert to univariate mode.
     item_prefix : str
@@ -213,14 +231,58 @@ make_generator_from_df = dataframes_to_generator
 convert_csvs_to_gift_eval = build_dataset_from_csvs
 
 
+
 if __name__ == "__main__":
-    # Example: Convert IMOS data
-    build_dataset_from_csvs(
-        csv_dir="/home/zhongzheng/TIME/data/processed_csv/IMOS/15T",
-        output_path="/home/zhongzheng/TIME/data/hf_dataset/IMOS/15T",
-        # pattern="item_*.csv",
-        # freq="15T",
-        to_univariate=False,
-        item_prefix="imos_",
+    parser = argparse.ArgumentParser(
+        description="Build a HuggingFace Arrow dataset from a directory of CSV time series."
+    )
+    parser.add_argument(
+        "--csv-dir",
+        type=str,
+        required=True,
+        help="Directory containing input CSV files.",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        required=True,
+        help="Output path (directory) where the dataset will be saved.",
+    )
+    parser.add_argument(
+        "--pattern",
+        type=str,
+        default="*.csv",
+        help="Glob pattern to match CSV files (default: '*.csv').",
+    )
+    parser.add_argument(
+        "--freq",
+        type=str,
+        default=None,
+        help=(
+            "Time frequency string, e.g. 'D', '15T'. "
+            "If omitted, the frequency will be inferred from the datetime index; "
+            "if inference fails, an error is raised."
+        ),
+    )
+    parser.add_argument(
+        "--to-univariate",
+        action="store_true",
+        help="Convert each column to a separate univariate series (UTS mode).",
+    )
+    parser.add_argument(
+        "--item-prefix",
+        type=str,
+        default="",
+        help="Prefix for item_id naming.",
     )
 
+    args = parser.parse_args()
+
+    build_dataset_from_csvs(
+        csv_dir=args.csv_dir,
+        output_path=args.output_path,
+        pattern=args.pattern,
+        freq=args.freq,
+        to_univariate=args.to_univariate,
+        item_prefix=args.item_prefix,
+    )

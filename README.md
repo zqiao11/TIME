@@ -1,11 +1,11 @@
 # TIME: Time Series Benchmarking Framework
 
-A comprehensive framework for time series forecasting benchmarking, providing an end-to-end pipeline from data collection to model evaluation.
+A comprehensive framework for time series forecasting benchmarking, providing a full workflow spanning from data collection to model evaluation.
 
 
 ## Installation
 
-We strongly recommend using Conda to manage the environment
+We recommend using Conda to manage the environment
 
 ```bash
 conda create -n timebench python=3.11 -y
@@ -13,7 +13,11 @@ conda activate timebench
 pip install -e .
 ```
 
-Add path of datasets as GIFT_EVAL in .env
+Define the output path for processed HF datasets in .env. [Used as `storage_env_var` in [`Dataset`](src/timebench/evaluation/data.py#L120). This implementation follows Gift-Eval and may be subject to change.]
+
+```bash
+echo "GIFT_EVAL=PATH_TO_SAVE" >> .env
+```
 
 ## Overview
 
@@ -30,18 +34,15 @@ After preprocessing and configuration, the pipeline splits into two parallel bra
 ## Pipeline Architecture
 
 ### 1. Data Curation (数据收集)
-
-[Optional] Put raw time series csv into `data/raw_csv/`. But you can also pass the specific path in the following command.
-
-[Trivial] Some examples to curate datasets can be found in `src/timebench/curation/`
-
+Due to the varying methods required for data scraping, this stage is not included in the main framework. However, we provide some sample crawling scripts for reference.
 ---
 
 ### 2. Preprocessing (数据预处理)
 
-**Purpose**: Clean and validate time series data, ensuring quality for downstream tasks.
+**Purpose**: Clean and validate time series data to generate preprocessed datasets.
 
-**Input**: Raw CSV files
+**Input**: Raw CSV files of a time series dataset
+
 **Output**: Cleaned CSV files in `data/processed_csv/{dataset}/{freq}/` and summary reports in `data/processed_summary/{freq}/`
 
 **Processing Steps**:
@@ -53,15 +54,6 @@ After preprocessing and configuration, the pipeline splits into two parallel bra
 5. Outlier detection and cleaning (marked with `[sp]` for spike presence)
 6. High correlation detection between variables
 
-**Usage**:
-
-```bash
-# Single file mode
-python -m timebench.preprocess --input_path data.csv --dataset MyDataset
-
-# Multi-file mode
-python -m timebench.preprocess --input_path csv_folder/ --dataset IMOS --freq 15T
-```
 
 **Details**: See [docs/PREPROCESS.md](docs/PREPROCESS.md)
 
@@ -72,6 +64,7 @@ python -m timebench.preprocess --input_path csv_folder/ --dataset IMOS --freq 15
 **Purpose**: Convert preprocessed CSV files to Arrow format (HuggingFace Datasets) for evaluation. Based on gift-eval. Supports both univariate (UTS) and multivariate (MTS) time series.
 
 **Input**: Cleaned CSV files from preprocessing
+
 **Output**: Arrow dataset saved to `$GIFT_EVAL/{dataset_name}/{freq}/`
 
 
@@ -82,19 +75,20 @@ python -m timebench.preprocess --input_path csv_folder/ --dataset IMOS --freq 15
 
 ### 4. Feature Extraction (特征提取)
 
-**Purpose**: Extract statistical and temporal features from preprocessed data for analysis and future benchmarking.
+**Purpose**: Extract statistical and tsfeatures from preprocessed data for pattern-based benchmarking.
 
 **Input**: Preprocessed CSV files from `data/processed_csv/`
+
 **Output**: Feature CSV files in `output/features/{dataset}/{freq}/{split_mode}.csv`
 
-**Features Extracted**:
+**Tsfeatures for variate pattern definition**:
 
 - Meta features: random walk flag, spike presence flag
 - Trend features: strength, stability, Hurst exponent
 - Seasonal features: strength, correlation, lumpiness
 - Residual features: ACF, entropy
 
-**Saved but not used**:
+**Statistical features for archiving**:
 - Statistical features: mean, std, missing rate, length
 - Periodicity features: FFT-detected periods and strengths
 
@@ -105,20 +99,20 @@ python -m timebench.preprocess --input_path csv_folder/ --dataset IMOS --freq 15
 
 ### 5. Model Evaluation (模型评估)
 
-**Purpose**: Evaluate forecasting models on test/validation data with comprehensive per-window metrics.
+**Purpose**: Evaluate forecasting models and save window-level results for future visualization.
 
 **Input**: Arrow dataset from Dataset Building
-**Output**: Predictions and metrics in `output/results/{model_name}/{dataset}_{term}/`
+
+**Output**: Window-level predictions and metrics in `output/results/{model_name}/{dataset}_{term}/`
 
 **Evaluation Features**:
 
-- Per-window evaluation (multiple non-overlapping windows per series)
-- Comprehensive metrics: MSE, MAE, RMSE, MAPE, sMAPE, MASE, ND, CRPS, QuantileLoss
-- Support for both point and probabilistic forecasts
-- Test/validation split support
+- Rolling-window evaluation
+- Use multiple quantiles both point and probabilistic forecasts (same as gift-eval)
+- Test/val split support. Val split is only for hyperprameter tuning, and no results are saved..
 
 
-**Configuration**: See [docs/PRED_CONFIG.md](docs/PRED_CONFIG.md) for setting `prediction_length` and `test_split` in `config/datasets.yaml`
+**Configuration**: See [docs/PRED_CONFIG.md](docs/PRED_CONFIG.md) for setting configs in `config/datasets.yaml`
 
 **Details**: See [docs/EVALUATION.md](docs/EVALUATION.md)
 
@@ -131,19 +125,16 @@ python -m timebench.preprocess --input_path csv_folder/ --dataset IMOS --freq 15
 1. **Preprocess data**:
 
    ```bash
-   python -m timebench.preprocess --input_path raw_data/ --dataset IMOS --freq 15T
+   python -m timebench.preprocess --input_path PATH_RAW_IMOS --dataset IMOS --freq 15T
    ```
 
 2. **Build dataset**:
 
-   ```python
-   from timebench.evaluation.dataset_builder import build_dataset_from_csvs
-
-   build_dataset_from_csvs(
-       csv_dir="./data/processed_csv/IMOS/15T",
-       output_path="./datasets/GIFT-Eval/IMOS/15T",
-       freq="15T",
-   )
+   ```bash
+   python -m timebench.evaluation.dataset_builder \
+     --csv-dir ./data/processed_csv/IMOS/15T \
+     --output-path ./datasets/GIFT-Eval/IMOS/15T \
+     --freq 15T
    ```
 
 3. **Extract features**:
@@ -195,26 +186,3 @@ See [docs/PRED_CONFIG.md](docs/PRED_CONFIG.md) for detailed configuration guide.
 - [Prediction Configuration](docs/PRED_CONFIG.md): Setting up prediction tasks
 - [Evaluation Guide](docs/EVALUATION.md): Model evaluation workflow
 
-## Dependencies
-
-- Python >= 3.11
-- GIFT-Eval (for data loading and evaluation framework)
-- PyTorch >= 2.1 (for deep learning models)
-- NumPy, Pandas, SciPy (for data processing)
-- HuggingFace Datasets (for Arrow format support)
-
-## License
-
-MIT License
-
-## Citation
-
-If you use TIME in your research, please cite:
-
-```bibtex
-@software{time2024,
-  title = {TIME: Time Series Benchmarking Framework},
-  year = {2024},
-  url = {https://github.com/yourusername/TIME}
-}
-```
