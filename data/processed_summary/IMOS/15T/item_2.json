@@ -25,10 +25,14 @@
             "CPHL"
         ],
         "dropped_columns": [],
+        "recommended_drop_columns": [],
+        "auto_drop": false,
+        "num_observations": 51972,
         "spike_presence_columns": [],
         "random_walk_columns": [
             "PSAL[rw]"
         ],
+        "drop_marked_columns": [],
         "output_path": "./data/processed_csv/IMOS/15T/item_2.csv"
     },
     "CNDC": {
@@ -185,65 +189,6 @@
             "window_size": 866,
             "action": "unchanged",
             "cleaned_count": 0
-        }
-    },
-    "multivariate": {
-        "correlation_duplicates": [
-            [
-                "CNDC",
-                "TEMP",
-                0.9984
-            ]
-        ],
-        "correlation_matrix": {
-            "CNDC": {
-                "CNDC": 1.0,
-                "DOX2": -0.5308308224315454,
-                "PSAL[rw]": 0.8173961661017175,
-                "TEMP": 0.9983955198296195,
-                "TURB": 0.04589924652206672,
-                "CPHL": -0.02292559573268819
-            },
-            "DOX2": {
-                "CNDC": -0.5308308224315454,
-                "DOX2": 1.0,
-                "PSAL[rw]": -0.6321725187558207,
-                "TEMP": -0.511476788505509,
-                "TURB": -0.3784155977953138,
-                "CPHL": -0.2365127456434899
-            },
-            "PSAL[rw]": {
-                "CNDC": 0.8173961661017175,
-                "DOX2": -0.6321725187558207,
-                "PSAL[rw]": 1.0,
-                "TEMP": 0.7845417699297891,
-                "TURB": 0.11583250048872357,
-                "CPHL": 0.0612539481788561
-            },
-            "TEMP": {
-                "CNDC": 0.9983955198296195,
-                "DOX2": -0.511476788505509,
-                "PSAL[rw]": 0.7845417699297891,
-                "TEMP": 1.0,
-                "TURB": 0.03837550312587499,
-                "CPHL": -0.03038624600330701
-            },
-            "TURB": {
-                "CNDC": 0.04589924652206672,
-                "DOX2": -0.3784155977953138,
-                "PSAL[rw]": 0.11583250048872357,
-                "TEMP": 0.03837550312587499,
-                "TURB": 1.0,
-                "CPHL": 0.5237225512404821
-            },
-            "CPHL": {
-                "CNDC": -0.02292559573268819,
-                "DOX2": -0.2365127456434899,
-                "PSAL[rw]": 0.0612539481788561,
-                "TEMP": -0.03038624600330701,
-                "TURB": 0.5237225512404821,
-                "CPHL": 1.0
-            }
         }
     }
 }

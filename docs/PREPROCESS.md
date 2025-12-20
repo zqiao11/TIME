@@ -12,7 +12,7 @@
 4. [命令行参数](#4-命令行参数)
 5. [输出文件说明](#5-输出文件说明)
 6. [决策与数据清理](#6-决策与数据清理)
-7. [API 参考](#7-api-参考)
+7. [下一步](#7-下一步)
 
 ---
 
@@ -26,11 +26,11 @@
 |------|------|
 | **数据类型检查** | 确保数据为数值类型 |
 | **长度检查** | 基于频率自动确定最小长度要求 |
-| **缺失值检查与填充** | 检查缺失率，使用前向/后向填充 |
+| **缺失值检查** | 检查缺失率，**保留原始 NaN 值**（不进行填充） |
 | **常量序列检测** | 检测并丢弃几乎不变的序列 |
 | **白噪声检测** | 使用 Ljung-Box 检验检测纯噪声序列 |
 | **随机游走检测** | 使用 ADF 检验检测随机游走特性（标记 `[rw]`） |
-| **异常值检测与清洗** | 基于滑动窗口 IQR 方法检测和清洗极端异常值 |
+| **异常值检测与清洗** | 基于滑动窗口 IQR 方法检测和清洗极端异常值，**异常值替换为前一个正常值**（不是 NaN） |
 | **高相关变量检测** | 检测变量间的高相关性（默认阈值 0.95） |
 | **数据集级汇总统计** | 汇总多个 series 的统计信息，辅助人工决策 |
 
@@ -42,6 +42,7 @@
 |------|------|------|
 | `[rw]` | Random Walk | 该变量在 ADF 检验中未能拒绝单位根假设 |
 | `[sp]` | Spike Presence | 该变量存在较多瞬态尖峰（>5%） |
+| `[drop]` | 建议删除 | 该变量不符合要求，建议删除（仅在 `auto_drop=False` 时显示） |
 | `[rw,sp]` | 两者皆有 | 同时具有随机游走和尖峰特性 |
 
 ---
@@ -95,16 +96,25 @@ python -m timebench.preprocess \
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ Step A: 逐列单变量检查（对每个 variate）                                       │
 │                                                                             │
+│   数据处理策略：                                                               │
+│   - 保存原始序列（保留所有 NaN）                                              │
+│   - 为需要完整数据的 check（如异常值检测），临时填充 NaN → 0                  │
+│   - 最终保存时，将清洗结果映射回原始序列，保留原始 NaN                         │
+│                                                                             │
 │   ├─ 数据类型检查 → 非数值类型 → ❌ 丢弃                                      │
 │   ├─ 长度检查 → 长度 < min_length → ❌ 丢弃                                  │
-│   ├─ 缺失率检查 → 缺失率 > 20% → ❌ 丢弃                                     │
+│   ├─ 缺失率检查 → 缺失率 > 阈值 → ❌ 丢弃             │
 │   ├─ 时间戳检查 → 非单调递增 → ❌ 丢弃                                        │
 │   ├─ 常量检测 → Top-5 值占比 > 50% 且熵 < 0.1 → ❌ 丢弃                       │
 │   ├─ 白噪声检测 → Ljung-Box p > 0.05 → ❌ 丢弃                               │
 │   ├─ 随机游走检测 → ADF p > 0.05 → 标记 [rw]（不丢弃）                        │
 │   └─ 异常值检测 → 极端异常 > 5% → ❌ 丢弃                                     │
-│                  → 极端异常 ≤ 5% → 清洗（用前值替换）                          │
+│                  → 极端异常 ≤ 5% → 清洗异常点（用前一个正常值替换）         │
 │                  → 瞬态尖峰 > 5% → 标记 [sp]（不丢弃）                         │
+│                                                                             │
+│   处理模式：                                                                  │
+│   - auto_drop=False（默认）：所有列都保留，不符合要求的列标记为 [drop]          │
+│   - auto_drop=True：不符合要求的列直接删除，不保留在输出中                      │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -118,11 +128,40 @@ python -m timebench.preprocess \
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 输出                                                                         │
 │   - 清洗后的 CSV 文件                                                         │
-│   - 详细结果 JSON 文件                                                        │
-│   - 数据集级汇总 JSON（多文件模式）                                            │
+│     * 保留原始 NaN 值（不进行填充）                                            │
+│     * 异常值替换为前一个正常值                                      │
+│     * auto_drop=True 时：不符合要求的列已删除                                  │
+│     * auto_drop=False 时：所有列都保留，不符合要求的列标记为 [drop]              │
+│   - 详细结果 JSON 文件（每个 series 一个）                                      │
+│     * 包含 num_observations（非 NaN 值总数）                                   │
+│     * 统计值基于最终输出的 cleaned_df 计算（auto_drop=True 时为删除后的数据）     │
+│   - 数据集级汇总 JSON（`_summary.json`，仅多文件模式）                          │
+│     * 包含数据集级别的统计信息（num_observations、series 长度等）                │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### 数据处理策略说明
+
+#### Missing Value (NaN) 处理
+
+- **检查阶段**：为了进行需要完整数据的 check（如异常值检测、常量检测等），系统会临时将 NaN 填充为 0
+- **最终保存**：**原始 NaN 值会被完整保留**，不会进行任何填充或插值处理
+- **原因**：某些统计检验（如异常值检测的 rolling 操作）需要完整数据才能准确计算，但最终输出应保留原始缺失信息
+
+#### 异常值处理
+
+- **检测方法**：基于滑动窗口 IQR（四分位距）方法，区分两类异常：
+  - **Transient Spikes（瞬态尖峰）**：偏离局部分布但属于正常时间特性的点（如周期性峰值），仅标记 `[sp]`，不删除
+  - **Extreme Outliers（极端异常）**：明显错误的数据点
+    - 如果比例 > 5%：直接丢弃该 variate
+    - 如果比例 ≤ 5%：**替换为前一个正常值**（不是 NaN）
+- **最终保存**：异常值被替换为前一个正常值，原始 NaN 保持不变
+
+#### 最终 CSV 文件内容
+
+- ✅ **原始 NaN 值**：完整保留
+- ✅ **异常值**：替换为前一个正常值（不是 NaN）
+- ✅ **其他数据**：保持不变
 
 ---
 
@@ -136,7 +175,8 @@ python -m timebench.preprocess \
     --dataset <数据集名称> \
     [--freq <频率>] \
     [--missing_rate_thresh <阈值>] \
-    [--output_dir <输出目录>]
+    [--output_dir <输出目录>] \
+    [--auto_drop]
 ```
 
 | 参数 | 必需 | 默认值 | 说明 |
@@ -144,56 +184,106 @@ python -m timebench.preprocess \
 | `--input_path` | ✅ | - | CSV 文件或文件夹路径 |
 | `--dataset` | ✅ | - | 数据集名称（用于输出文件命名） |
 | `--freq` | ❌ | 自动推断 | 时间序列频率，如 `H`, `15T`, `D` |
-| `--missing_rate_thresh` | ❌ | 0.2 | 最大允许缺失率 |
+| `--missing_rate_thresh` | ❌ | 0.3 | 最大允许缺失率 |
 | `--output_dir` | ❌ | `./data` | 输出根目录 |
+| `--auto_drop` | ❌ | False | 自动删除不符合要求的列。默认 False（仅检查不删除），所有列都会保留在输出中，但会标记建议删除的列 |
 
-### 人工决策后的数据清理模型
+### 处理模式说明
 
-#### 移除 Variate（变量/列）
+#### 默认模式（`auto_drop=False`）
 
-```bash
-python -m timebench.preprocess \
-    --remove_variate <变量名> \
-    --target_dir <CSV目录> \
-    [--dry_run]
-```
+- **行为**：仅检查不删除，所有列都会保留在输出 CSV 中
+- **标记**：不符合要求的列会被标记为 `[drop]`
+- **用途**：适合需要查看所有检查结果，然后根据 summary 手动决定删除哪些列的场景
+- **统计值**：JSON 中的统计值（如 `num_observations`、`n_cols` 等）基于包含所有列的数据计算
 
-支持批量移除（逗号分隔）：
+#### 自动删除模式（`auto_drop=True`）
 
-```bash
-python -m timebench.preprocess \
-    --remove_variate CNDC,TEMP,TURB \
-    --target_dir ./data/processed_csv/IMOS/15T
-```
-
-#### 移除 Series（CSV 文件）
-
-```bash
-python -m timebench.preprocess \
-    --remove_series <文件名> \
-    --target_dir <CSV目录> \
-    [--dry_run]
-```
-
-支持批量移除：
-
-```bash
-python -m timebench.preprocess \
-    --remove_series item_0.csv,item_7.csv \
-    --target_dir ./data/processed_csv/IMOS/15T
-```
-
-| 参数 | 说明 |
-|------|------|
-| `--remove_variate` | 要移除的变量名（支持逗号分隔） |
-| `--remove_series` | 要移除的 CSV 文件名（支持逗号分隔） |
-| `--target_dir` | 包含处理后 CSV 文件的目录 |
-| `--dry_run` | 预览模式，只显示将执行的操作而不实际修改 |
+- **行为**：自动删除不符合要求的列，不保留在输出 CSV 中
+- **标记**：不会出现 `[drop]` 标记（因为不符合要求的列已被删除）
+- **用途**：适合希望直接获得清洗后数据，不需要手动决策的场景
+- **统计值**：JSON 中的统计值基于删除后的数据计算
 
 ---
 
+## 5. 输出文件说明
 
-## 5. 决策与数据清理
+### 单个 Series 的 JSON 文件
+
+每个处理后的 CSV 文件对应一个 JSON 文件（如 `item_0.json`），包含以下信息：
+
+#### `_meta` 字段
+
+| 字段 | 说明 |
+|------|------|
+| `inferred_freq` | 推断的时间序列频率 |
+| `min_length` | 最小长度要求 |
+| `n_rows` | 行数（时间点数量） |
+| `n_cols` | 列数（变量数量） |
+| `shape` | DataFrame 形状 `[n_rows, n_cols]` |
+| `original_columns` | 原始列名列表 |
+| `kept_columns` | 保留的列名列表（带标记） |
+| `dropped_columns` | 实际被删除的列（仅在 `auto_drop=True` 时） |
+| `recommended_drop_columns` | 建议删除的列（检查结果） |
+| `auto_drop` | 是否启用了自动删除模式 |
+| `num_observations` | **非 NaN 值的总数**（NaN 不计入 observations） |
+| `spike_presence_columns` | 具有 `[sp]` 标记的列 |
+| `random_walk_columns` | 具有 `[rw]` 标记的列 |
+| `drop_marked_columns` | 具有 `[drop]` 标记的列（仅在 `auto_drop=False` 时） |
+
+#### 各变量的检查结果
+
+每个变量包含：
+- `predictable`: 是否可预测（是否通过检查）
+- `checks`: 检查结果列表
+- `has_spike_presence`: 是否有尖峰特性
+- `is_random_walk`: 是否为随机游走
+- `outlier_stats`: 异常值统计信息
+
+**注意**：
+- `multivariate` 字段（相关性矩阵）**不会保存**到 JSON 文件中，以减小文件大小
+- `cleaned_ts` 字段（清洗后的时间序列）**不会保存**到 JSON 文件中
+
+### 数据集级汇总文件（`_summary.json`）
+
+**仅当数据集包含多个 series 时**，会生成 `_summary.json` 文件。
+
+#### 基本信息
+
+| 字段 | 说明 |
+|------|------|
+| `dataset` | 数据集名称 |
+| `freq` | 时间序列频率 |
+| `num_series` | Series 数量 |
+| `success_count` | 成功处理的 Series 数量 |
+
+#### 数据集级别统计（仅当 `num_series > 1` 时）
+
+| 字段 | 说明 |
+|------|------|
+| `num_observations` | 所有 series 的非 NaN observations 总和 |
+| `max_series_length` | 最长的 series 长度 |
+| `min_series_length` | 最短的 series 长度 |
+| `avg_series_length` | 平均 series 长度 |
+
+#### Variates 统计
+
+每个 variate 包含：
+- `total`: 出现在多少个 series 中
+- `kept`: 在多少个 series 中被保留
+- `rw`: 在多少个 series 中被标记为随机游走
+- `sp`: 在多少个 series 中被标记为有尖峰
+- `kept_ratio`, `rw_ratio`, `sp_ratio`: 对应的比例
+- `dropped_series`: 被丢弃的 series 列表
+- `kept_series`: 被保留的 series 列表
+
+**注意**：
+- `correlation_duplicates` 字段**不会保存**到 `_summary.json` 中
+- 相关性信息仅用于打印输出，不保存到文件
+
+---
+
+## 6. 决策与数据清理
 
 ### 决策提示
 
@@ -238,6 +328,28 @@ python -m timebench.preprocess \
 | `r均值(低)` | 在非高相关 series（r ≤ 0.95）上的平均相关系数 |
 | `r均值(全)` | 在所有 series 上的平均相关系数 |
 
+### 批量删除带 [drop] 标记的列
+
+如果使用默认模式（`auto_drop=False`）处理数据，所有不符合要求的列都会被标记为 `[drop]` 但保留在输出中。可以使用以下命令批量删除这些列：
+
+```bash
+# 预览删除所有带 [drop] 标记的列
+python -m timebench.preprocess \
+    --remove_drop_marked \
+    --target_dir ./data/processed_csv/IMOS/15T \
+    --dry_run
+
+# 实际执行删除
+python -m timebench.preprocess \
+    --remove_drop_marked \
+    --target_dir ./data/processed_csv/IMOS/15T
+```
+
+该命令会：
+- 从所有 CSV 文件中删除带 `[drop]` 标记的列
+- 更新对应的 JSON 文件（移除相关记录，更新 `num_observations` 等统计信息）
+- 更新 `_summary.json` 汇总文件
+
 ### 使用 `--dry_run` 预览
 
 在执行删除操作前，建议先使用 `--dry_run` 预览：
@@ -258,11 +370,13 @@ python -m timebench.preprocess --remove_variate TURB --target_dir ./data/process
 
 ---
 
-## 下一步
+## 7. 下一步
 
 预处理完成后：
 
-1. 查看 `_variate_summary.json` 了解数据集统计情况
-2. 参考 [DATA_FORMAT.md](./DATA_FORMAT.md) 将清洗后的数据转换为 Arrow 格式
-3. 参考 [PRED_CONFIG.md](./PRED_CONFIG.md) 配置预测任务参数
-4. 参考[] 对清洗后的数据计算tsfeature
+1. 查看 `_summary.json`（多 series 数据集）或单个 JSON 文件了解数据集统计情况
+2. 根据统计结果决定是否删除某些 variate 或 series（使用 `--remove_variate` 或 `--remove_series`）
+3. 如果使用默认模式（`auto_drop=False`），可以使用 `--remove_drop_marked` 批量删除所有带 `[drop]` 标记的列
+4. 参考 [DATA_FORMAT.md](./DATA_FORMAT.md) 将清洗后的数据转换为 Arrow 格式
+5. 参考 [PRED_CONFIG.md](./PRED_CONFIG.md) 配置预测任务参数
+6. 参考相关文档对清洗后的数据计算 tsfeature

@@ -48,7 +48,8 @@ class PreprocessPipeline:
             freq: str | None = None,
             min_length: int | None = None,
             missing_rate_thresh: float = 0.2,
-            corr_thresh: float = 0.95
+            corr_thresh: float = 0.95,
+            auto_drop: bool = False
     ):
         """
         Args:
@@ -56,12 +57,14 @@ class PreprocessPipeline:
             min_length: 最小长度要求。如果为 None，则根据频率自动设置
             missing_rate_thresh: 允许的最大缺失率
             corr_thresh: 相关性阈值，用于检测高相关变量
+            auto_drop: 是否自动删除不符合要求的列。如果为 False（默认），则仅检查不删除，所有列都会保留在输出中
         """
         self._freq_override = freq  # 用户指定的频率（可选）
         self._min_length_override = min_length  # 用户指定的 min_length（可选）
         self.min_length = min_length if min_length is not None else FREQ_MIN_LENGTH["default"]
         self.missing_rate_thresh = missing_rate_thresh
         self.corr_thresh = corr_thresh
+        self.auto_drop = auto_drop  # 是否自动删除不符合要求的列
         self.inferred_freq = None  # 推断出的频率
 
     def run(self, df: pd.DataFrame, output_path: str | None = None) -> tuple[pd.DataFrame, dict]:
@@ -103,33 +106,44 @@ class PreprocessPipeline:
 
         # --- Step A: 逐列单变量检查和清洗 ---
         cleaned_columns = {}  # 存储清洗后的列 {new_col_name: cleaned_series}
-        dropped_columns = []  # 被丢弃的列
+        dropped_columns = []  # 建议删除的列（当 auto_drop=False 时，这些列仍会保留但会被标记）
+        recommended_drop_columns = []  # 建议删除的列（用于记录，即使不实际删除）
 
         for col in df.columns:
             ts = df[col]
             col_result = self._run_univariate(ts)
             results[col] = col_result
 
-            if col_result["predictable"]:
-                # 确定新列名（添加特性标记后缀）
-                new_col_name = col
-                tags = []
-                if col_result.get("has_spike_presence", False):
-                    tags.append("sp")
-                if col_result.get("is_random_walk", False):
-                    tags.append("rw")
-                if tags:
-                    new_col_name = f"{col}[{','.join(tags)}]"
+            # 确定新列名（添加特性标记后缀）
+            new_col_name = col
+            tags = []
+            if col_result.get("has_spike_presence", False):
+                tags.append("sp")
+            if col_result.get("is_random_walk", False):
+                tags.append("rw")
+            if not col_result["predictable"]:
+                # 如果不符合要求，添加 [drop] 标记（即使 auto_drop=False 也会标记）
+                tags.append("drop")
+            if tags:
+                new_col_name = f"{col}[{','.join(tags)}]"
+
+            # 根据 auto_drop 决定是否保留该列
+            if self.auto_drop and not col_result["predictable"]:
+                # 自动删除模式：不符合要求的列不保留
+                dropped_columns.append(col)
+                recommended_drop_columns.append(col)
+            else:
+                # 仅检查模式（默认）：所有列都保留，但会标记不符合要求的列
+                if not col_result["predictable"]:
+                    recommended_drop_columns.append(col)
 
                 # 获取清洗后的时间序列
                 cleaned_ts = col_result.get("cleaned_ts")
                 if cleaned_ts is not None:
                     cleaned_columns[new_col_name] = cleaned_ts
                 else:
-                    # 如果没有清洗（无异常），使用原始填充后的序列
-                    cleaned_columns[new_col_name] = ts.ffill().bfill().fillna(0)
-            else:
-                dropped_columns.append(col)
+                    # 如果没有清洗（无异常），使用原始序列（保留原始NaN）
+                    cleaned_columns[new_col_name] = ts
 
         # 构建清洗后的 DataFrame
         cleaned_df = pd.DataFrame(cleaned_columns)
@@ -140,17 +154,34 @@ class PreprocessPipeline:
         results["_meta"]["shape"] = list(cleaned_df.shape)
         results["_meta"]["original_columns"] = list(df.columns)
         results["_meta"]["kept_columns"] = list(cleaned_df.columns)
-        results["_meta"]["dropped_columns"] = dropped_columns
+        results["_meta"]["dropped_columns"] = dropped_columns  # 实际被删除的列（仅在 auto_drop=True 时）
+        results["_meta"]["recommended_drop_columns"] = recommended_drop_columns  # 建议删除的列（检查结果）
+        results["_meta"]["auto_drop"] = self.auto_drop
+        # 统计非NaN的observations数量
+        results["_meta"]["num_observations"] = int(cleaned_df.notna().sum().sum())
         results["_meta"]["spike_presence_columns"] = [
             col for col in cleaned_df.columns if "[sp" in col
         ]
         results["_meta"]["random_walk_columns"] = [
             col for col in cleaned_df.columns if "[rw" in col or ",rw]" in col
         ]
+        results["_meta"]["drop_marked_columns"] = [
+            col for col in cleaned_df.columns if "[drop" in col or ",drop]" in col
+        ]
 
-        print(f"[PreprocessPipeline] 原始列数: {len(df.columns)}, "
-              f"保留列数: {len(cleaned_df.columns)}, "
-              f"丢弃列数: {len(dropped_columns)}")
+        if self.auto_drop:
+            print(f"[PreprocessPipeline] 模式: 自动删除 (auto_drop=True)")
+            print(f"[PreprocessPipeline] 原始列数: {len(df.columns)}, "
+                  f"保留列数: {len(cleaned_df.columns)}, "
+                  f"丢弃列数: {len(dropped_columns)}")
+        else:
+            print(f"[PreprocessPipeline] 模式: 仅检查不删除 (auto_drop=False, 默认)")
+            print(f"[PreprocessPipeline] 原始列数: {len(df.columns)}, "
+                  f"输出列数: {len(cleaned_df.columns)} (全部保留)")
+            if recommended_drop_columns:
+                print(f"[PreprocessPipeline] ⚠️  建议删除的列 ({len(recommended_drop_columns)} 个): {recommended_drop_columns}")
+                print(f"[PreprocessPipeline]   这些列已标记为 [drop]，请根据 summary 决定是否手动删除")
+
         if results["_meta"]["spike_presence_columns"]:
             print(f"[PreprocessPipeline] 具有 spike_presence [sp] 的列: {results['_meta']['spike_presence_columns']}")
         if results["_meta"]["random_walk_columns"]:
@@ -231,10 +262,14 @@ class PreprocessPipeline:
         if not passed:
             results["predictable"] = False
 
-        # 填充缺失值
-        ts = ts.ffill().bfill().fillna(0)
+        # 保存原始序列（保留所有NaN）
+        ts_original = ts.copy()
 
-        passed, val = self._check_timestamp(ts)
+        # 为了进行需要完整数据的check（如异常值检测），临时填充NaN
+        # 但最终保存时会保留原始NaN值
+        ts_for_checks = ts.ffill().bfill().fillna(0)
+
+        passed, val = self._check_timestamp(ts_for_checks)
         results["checks"].append(
             f"Timestamp stability {'✅ Passed' if passed else '❌ Failed'} (monotonic={val})"
         )
@@ -245,7 +280,7 @@ class PreprocessPipeline:
             return results
 
         # Step 3: Signal existence
-        passed, topk_dominance, entropy = self._check_constant(ts)
+        passed, topk_dominance, entropy = self._check_constant(ts_for_checks)
         results["checks"].append(
             f"Constant series {'✅ Passed' if passed else '❌ Failed'} (topk_dominance={topk_dominance:.2f}%, entropy={entropy:.2f})"
         )
@@ -254,7 +289,7 @@ class PreprocessPipeline:
             return results
 
         # Step 4: White noise check (删除白噪声序列)
-        is_not_white_noise, wn_pval = self._check_white_noise(ts)
+        is_not_white_noise, wn_pval = self._check_white_noise(ts_for_checks)
         results["checks"].append(
             f"White noise test {'✅ Passed' if is_not_white_noise else '❌ Detected'} (p={wn_pval})"
         )
@@ -263,7 +298,7 @@ class PreprocessPipeline:
             return results
 
         # Step 5: Random walk check (标记但不删除)
-        is_stationary, rw_pval = self._check_random_walk(ts)
+        is_stationary, rw_pval = self._check_random_walk(ts_for_checks)
         is_random_walk = not is_stationary
         results["is_random_walk"] = is_random_walk
         results["checks"].append(
@@ -272,7 +307,21 @@ class PreprocessPipeline:
         # 注意：随机游走不删除，只标记
 
         # Step 6: Outlier check and cleaning
-        keep_variate, cleaned_ts, has_spike_presence, outlier_stats = self._check_and_clean_outliers(ts)
+        # 对于异常值检测，使用填充后的数据进行检测（需要完整数据才能检测异常值）
+        keep_variate, cleaned_ts_filled, has_spike_presence, outlier_stats = self._check_and_clean_outliers(ts_for_checks)
+
+        # 将清洗后的序列映射回原始序列
+        # 规则：原始NaN保持不变，异常值替换为前一个正常值（不是NaN）
+        if cleaned_ts_filled is not None and keep_variate:
+            # 从原始序列开始（保留所有原始NaN）
+            cleaned_ts = ts_original.copy()
+            # 只更新非NaN位置的值，使用清洗后的值（异常值已被替换为前一个正常值）
+            # 这样：原始NaN保持NaN，异常值被替换为前一个正常值
+            non_nan_mask = ~ts_original.isna()
+            cleaned_ts[non_nan_mask] = cleaned_ts_filled[non_nan_mask]
+        else:
+            # 如果没有清洗或不符合要求，返回原始序列（保留NaN）
+            cleaned_ts = ts_original if keep_variate else None
 
         if "error" in outlier_stats:
             results["checks"].append(
@@ -453,7 +502,11 @@ class PreprocessPipeline:
         topk_dominance = counts.iloc[:topk].sum()
 
         probs = counts.values
-        entropy = -np.sum(probs * np.log(probs + 1e-12)) / np.log(len(probs))
+        # 处理常数序列的情况（len(probs) == 1 时，熵为 0）
+        if len(probs) == 1:
+            entropy = 0.0
+        else:
+            entropy = -np.sum(probs * np.log(probs + 1e-12)) / np.log(len(probs))
 
         return topk_dominance < 0.5 and entropy > 0.1, topk_dominance * 100, round(entropy, 4)
 
@@ -654,6 +707,9 @@ def save_result_to_json(result: dict, json_path: str) -> None:
     """将预处理结果保存为 JSON 文件"""
     result_serializable = {}
     for key, value in result.items():
+        # 排除 multivariate 字段
+        if key == "multivariate":
+            continue
         if key == "_meta":
             result_serializable[key] = convert_to_serializable(value)
         elif isinstance(value, dict):
@@ -675,10 +731,18 @@ def print_result_summary(result: dict, source_name: str = "") -> None:
     """打印预处理结果摘要"""
     header = f"=== {source_name} 各列检查结果摘要 ===" if source_name else "=== 各列检查结果摘要 ==="
     print(f"\n{header}")
+
+    # 获取 auto_drop 模式
+    auto_drop = result.get("_meta", {}).get("auto_drop", False)
+
     for col, col_result in result.items():
         if col.startswith("_") or col == "multivariate":
             continue
-        status = "✅ 保留" if col_result.get("predictable", False) else "❌ 丢弃"
+        predictable = col_result.get("predictable", False)
+        if auto_drop:
+            status = "✅ 保留" if predictable else "❌ 丢弃"
+        else:
+            status = "✅ 通过" if predictable else "⚠️  建议删除"
         tags = []
         if col_result.get("has_spike_presence", False):
             tags.append("sp")
@@ -690,11 +754,11 @@ def print_result_summary(result: dict, source_name: str = "") -> None:
         # 打印 check 信息
         checks = col_result.get("checks", [])
         if checks:
-            if col_result.get("predictable", False):
-                # 保留的列：只打印最后一个 check（通常是 outlier check）
+            if predictable:
+                # 通过的列：只打印最后一个 check（通常是 outlier check）
                 print(f"    └─ {checks[-1]}")
             else:
-                # 丢弃的列：打印所有失败的 checks（带 ❌ 或 Detected 的）
+                # 未通过的列：打印所有失败的 checks（带 ❌ 或 Detected 的）
                 failed_checks = [c for c in checks if "❌" in c or "Detected" in c]
                 if failed_checks:
                     for i, check in enumerate(failed_checks):
@@ -711,6 +775,7 @@ def process_single_csv(
     output_json_path: str,
     freq: str | None = None,
     missing_rate_thresh: float = 0.2,
+    auto_drop: bool = False,
     verbose: bool = True
 ) -> tuple[pd.DataFrame | None, dict | None]:
     """
@@ -722,6 +787,7 @@ def process_single_csv(
         output_json_path: 输出 JSON 结果的路径
         freq: 时间序列频率（可选）
         missing_rate_thresh: 允许的最大缺失率
+        auto_drop: 是否自动删除不符合要求的列（默认 False，仅检查不删除）
         verbose: 是否打印详细信息
 
     Returns:
@@ -744,7 +810,8 @@ def process_single_csv(
     # 调用 PreprocessPipeline
     pipeline = PreprocessPipeline(
         freq=freq,
-        missing_rate_thresh=missing_rate_thresh
+        missing_rate_thresh=missing_rate_thresh,
+        auto_drop=auto_drop
     )
 
     try:
@@ -817,18 +884,18 @@ def remove_variate_from_dataset(target_dir: str, variate_name: str, dry_run: boo
                 json_name = csv_file.replace(".csv", ".json")
                 json_path = os.path.join(json_dir, json_name)
                 if os.path.exists(json_path):
-                    _update_json_remove_variate(json_path, variate_name)
+                    _update_json_remove_variate(json_path, variate_name, csv_path)
 
             modified_count += 1
         else:
             print(f"  {csv_file}: 未找到匹配的列")
 
-    # 更新 _variate_summary.json
-    summary_json_path = os.path.join(json_dir, "_variate_summary.json")
+    # 更新 _summary.json
+    summary_json_path = os.path.join(json_dir, "_summary.json")
     if os.path.exists(summary_json_path):
         print(f"\n更新汇总文件: {summary_json_path}")
         if not dry_run:
-            _update_summary_json_remove_variate(summary_json_path, variate_name)
+            _update_summary_json_remove_variate(summary_json_path, variate_name, target_dir)
 
     print("-" * 60)
     action = "将修改" if dry_run else "已修改"
@@ -837,7 +904,30 @@ def remove_variate_from_dataset(target_dir: str, variate_name: str, dry_run: boo
         print("提示: 移除 --dry_run 参数以实际执行修改")
 
 
-def _update_json_remove_variate(json_path: str, variate_name: str) -> None:
+def _recalculate_num_observations(json_path: str, csv_path: str) -> None:
+    """重新计算并更新 JSON 文件中的 num_observations"""
+    try:
+        if not os.path.exists(csv_path):
+            return
+        df = pd.read_csv(csv_path)
+        # 跳过timestamp列（如果存在）
+        if "timestamp" in df.columns:
+            df = df.drop(columns=["timestamp"])
+        num_obs = int(df.notna().sum().sum())
+
+        with open(json_path, "r") as f:
+            data = json.load(f)
+
+        if "_meta" in data:
+            data["_meta"]["num_observations"] = num_obs
+
+        with open(json_path, "w") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print(f"    ⚠️ 重新计算 num_observations 失败 ({json_path}): {e}")
+
+
+def _update_json_remove_variate(json_path: str, variate_name: str, csv_path: str | None = None) -> None:
     """更新单个 JSON 文件，移除指定 variate 的记录"""
     try:
         with open(json_path, "r") as f:
@@ -880,12 +970,16 @@ def _update_json_remove_variate(json_path: str, variate_name: str) -> None:
         with open(json_path, "w") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
+        # 重新计算 num_observations（如果提供了 CSV 路径）
+        if csv_path is not None:
+            _recalculate_num_observations(json_path, csv_path)
+
     except Exception as e:
         print(f"    ⚠️ 更新 JSON 失败 ({json_path}): {e}")
 
 
-def _update_summary_json_remove_variate(summary_json_path: str, variate_name: str) -> None:
-    """更新 _variate_summary.json，移除指定 variate"""
+def _update_summary_json_remove_variate(summary_json_path: str, variate_name: str, csv_dir: str | None = None) -> None:
+    """更新 _summary.json，移除指定 variate，并重新计算数据集级别的统计信息"""
     try:
         with open(summary_json_path, "r") as f:
             data = json.load(f)
@@ -902,8 +996,12 @@ def _update_summary_json_remove_variate(summary_json_path: str, variate_name: st
                 del data["variates"][key]
                 print(f"  已从汇总中移除: {key}")
 
-        with open(summary_json_path, "w") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        # 如果提供了 csv_dir，重新计算数据集级别的统计信息
+        if csv_dir is not None:
+            _update_summary_json_remove_series(summary_json_path, csv_dir)
+        else:
+            with open(summary_json_path, "w") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
 
     except Exception as e:
         print(f"  ⚠️ 更新汇总 JSON 失败: {e}")
@@ -960,8 +1058,8 @@ def remove_series_from_dataset(target_dir: str, series_name: str, dry_run: bool 
             os.remove(json_path)
             print(f"  ✅ 已删除 JSON: {json_path}")
 
-        # 更新 _variate_summary.json
-        summary_json_path = os.path.join(json_dir, "_variate_summary.json")
+        # 更新 _summary.json
+        summary_json_path = os.path.join(json_dir, "_summary.json")
         if os.path.exists(summary_json_path):
             _update_summary_json_remove_series(summary_json_path, target_dir)
             print(f"  ✅ 已更新汇总: {summary_json_path}")
@@ -972,8 +1070,8 @@ def remove_series_from_dataset(target_dir: str, series_name: str, dry_run: bool 
 
 def _update_summary_json_remove_series(summary_json_path: str, csv_dir: str) -> None:
     """
-    重新计算 _variate_summary.json
-    基于当前存在的 CSV 文件重新统计各 variate 和 correlation_duplicates 的信息
+    重新计算 _summary.json
+    基于当前存在的 CSV 文件重新统计各 variate 的信息
     """
     try:
         # 读取现有汇总
@@ -989,6 +1087,10 @@ def _update_summary_json_remove_series(summary_json_path: str, csv_dir: str) -> 
         corr_dup_stats = {}
         json_dir = os.path.dirname(summary_json_path)
 
+        # 数据集级别的统计
+        series_lengths = []
+        total_observations = 0
+
         # 辅助函数：去掉变量名的后缀标记（如 [rw], [sp]）
         def strip_var_suffix(var_name):
             return re.sub(r'\[.*?\]', '', var_name)
@@ -1000,6 +1102,14 @@ def _update_summary_json_remove_series(summary_json_path: str, csv_dir: str) -> 
             if os.path.exists(json_path):
                 with open(json_path, "r") as f:
                     series_data = json.load(f)
+
+                # 收集数据集级别的统计信息
+                meta = series_data.get("_meta", {})
+                series_length = meta.get("n_rows", 0)
+                num_obs = meta.get("num_observations", 0)
+                if series_length > 0:
+                    series_lengths.append(series_length)
+                total_observations += num_obs
 
                 # 统计 variates
                 for col, col_result in series_data.items():
@@ -1062,6 +1172,19 @@ def _update_summary_json_remove_series(summary_json_path: str, csv_dir: str) -> 
         data["success_count"] = len(csv_files)
         data["variates"] = {}
 
+        # 更新数据集级别的统计信息（仅当有多个series时）
+        if len(csv_files) > 1 and series_lengths:
+            data["num_observations"] = total_observations
+            data["max_series_length"] = max(series_lengths)
+            data["min_series_length"] = min(series_lengths)
+            data["avg_series_length"] = round(sum(series_lengths) / len(series_lengths), 2)
+        elif len(csv_files) <= 1:
+            # 如果只有一个或没有series，删除这些字段
+            data.pop("num_observations", None)
+            data.pop("max_series_length", None)
+            data.pop("min_series_length", None)
+            data.pop("avg_series_length", None)
+
         for variate, stats in variate_stats.items():
             total = stats["total"]
             data["variates"][variate] = {
@@ -1074,35 +1197,10 @@ def _update_summary_json_remove_series(summary_json_path: str, csv_dir: str) -> 
                 "sp_ratio": round(stats["sp"] / total, 4) if total > 0 else 0
             }
 
-        # 更新 correlation_duplicates 数据
-        data["correlation_duplicates"] = {}
-        for pair, stats in corr_dup_stats.items():
-            pair_key = f"{pair[0]} <-> {pair[1]}"
-
-            high_corr_values = stats["high_corr_values"]
-            all_corr_values = stats["all_corr_values"]
-
-            avg_corr_high = sum(high_corr_values) / len(high_corr_values) if high_corr_values else None
-            avg_corr_all = sum(all_corr_values) / len(all_corr_values) if all_corr_values else None
-
-            # 计算非高相关 series 上的平均值
-            low_corr_values = []
-            high_series_set = set(stats["high_series"])
-            for i, series in enumerate(stats["all_series"]):
-                if series not in high_series_set:
-                    low_corr_values.append(all_corr_values[i])
-            avg_corr_low = sum(low_corr_values) / len(low_corr_values) if low_corr_values else None
-
-            data["correlation_duplicates"][pair_key] = {
-                "high_count": stats["high_count"],
-                "total_count": len(all_corr_values),
-                "high_ratio": round(stats["high_count"] / len(all_corr_values), 4) if all_corr_values else 0,
-                "avg_corr_high": round(avg_corr_high, 4) if avg_corr_high is not None else None,
-                "avg_corr_low": round(avg_corr_low, 4) if avg_corr_low is not None else None,
-                "avg_corr_all": round(avg_corr_all, 4) if avg_corr_all is not None else None,
-                "high_series": stats["high_series"],
-                "all_series": stats["all_series"]
-            }
+        # 注意：不再保存 correlation_duplicates 字段，但保留计算用于打印
+        # 如果存在 correlation_duplicates 字段，删除它
+        if "correlation_duplicates" in data:
+            del data["correlation_duplicates"]
 
         with open(summary_json_path, "w") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
@@ -1111,6 +1209,135 @@ def _update_summary_json_remove_series(summary_json_path: str, csv_dir: str) -> 
         print(f"  ⚠️ 更新汇总 JSON 失败: {e}")
 
 
+def remove_drop_marked_variates(target_dir: str, dry_run: bool = False) -> None:
+    """
+    从数据集的所有 CSV 文件中移除所有带有 [drop] 标记的 variate（列），并更新对应的 JSON 文件
+
+    Args:
+        target_dir: 包含处理后 CSV 文件的目录
+        dry_run: 如果为 True，只显示将要执行的操作而不实际修改文件
+    """
+    if not os.path.isdir(target_dir):
+        raise ValueError(f"目录不存在: {target_dir}")
+
+    csv_files = sorted([f for f in os.listdir(target_dir) if f.endswith('.csv')])
+    if not csv_files:
+        print(f"[remove_drop_marked_variates] 目录中没有 CSV 文件: {target_dir}")
+        return
+
+    # 对应的 JSON 目录
+    json_dir = target_dir.replace("processed_csv", "processed_summary")
+
+    print(f"\n{'[DRY RUN] ' if dry_run else ''}从数据集中移除所有带 [drop] 标记的 variate")
+    print(f"目标 CSV 目录: {target_dir}")
+    print(f"目标 JSON 目录: {json_dir}")
+    print("-" * 60)
+
+    all_dropped_variates = set()  # 记录所有被删除的 variate（基础名称）
+    modified_count = 0
+
+    for csv_file in csv_files:
+        csv_path = os.path.join(target_dir, csv_file)
+        df = pd.read_csv(csv_path)
+
+        # 查找所有带 [drop] 标记的列
+        cols_to_drop = []
+        for col in df.columns:
+            if "[drop" in col or ",drop]" in col:
+                cols_to_drop.append(col)
+                # 提取基础名称（去掉所有标记）
+                base_col = re.sub(r'\[.*?\]', '', col)
+                all_dropped_variates.add(base_col)
+
+        if cols_to_drop:
+            print(f"  {csv_file}: 移除列 {cols_to_drop}")
+            if not dry_run:
+                df = df.drop(columns=cols_to_drop)
+                df.to_csv(csv_path, index=False)
+
+                # 更新对应的 JSON 文件
+                json_name = csv_file.replace(".csv", ".json")
+                json_path = os.path.join(json_dir, json_name)
+                if os.path.exists(json_path):
+                    _update_json_remove_drop_variates(json_path, cols_to_drop, csv_path)
+
+            modified_count += 1
+        else:
+            print(f"  {csv_file}: 未找到带 [drop] 标记的列")
+
+    # 更新 _summary.json
+    summary_json_path = os.path.join(json_dir, "_summary.json")
+    if os.path.exists(summary_json_path):
+        print(f"\n更新汇总文件: {summary_json_path}")
+        if not dry_run:
+            # 重新计算所有统计信息（包括数据集级别的统计）
+            _update_summary_json_remove_series(summary_json_path, target_dir)
+
+    print("-" * 60)
+    action = "将修改" if dry_run else "已修改"
+    print(f"{action} {modified_count}/{len(csv_files)} 个 CSV 文件")
+    if all_dropped_variates:
+        print(f"共移除 {len(all_dropped_variates)} 个不同的 variate: {sorted(all_dropped_variates)}")
+    if dry_run:
+        print("提示: 移除 --dry_run 参数以实际执行修改")
+
+
+def _update_json_remove_drop_variates(json_path: str, cols_to_drop: list[str], csv_path: str | None = None) -> None:
+    """更新单个 JSON 文件，移除所有带 [drop] 标记的 variate"""
+    try:
+        with open(json_path, "r") as f:
+            data = json.load(f)
+
+        # 找到并移除所有带 [drop] 标记的 variate
+        keys_to_remove = []
+        for key in data.keys():
+            if key.startswith("_") or key == "multivariate":
+                continue
+            # 检查是否在要删除的列列表中，或者包含 [drop] 标记
+            if key in cols_to_drop or "[drop" in key or ",drop]" in key:
+                keys_to_remove.append(key)
+
+        for key in keys_to_remove:
+            del data[key]
+
+        # 更新 _meta 信息
+        if "_meta" in data:
+            meta = data["_meta"]
+            # 更新 kept_columns（移除所有带 [drop] 标记的列）
+            if "kept_columns" in meta:
+                meta["kept_columns"] = [
+                    c for c in meta["kept_columns"]
+                    if c not in cols_to_drop and "[drop" not in c and ",drop]" not in c
+                ]
+            # 更新 dropped_columns（添加被删除的列的基础名称）
+            if "dropped_columns" in meta:
+                for col in cols_to_drop:
+                    base_col = re.sub(r'\[.*?\]', '', col)
+                    if base_col not in meta["dropped_columns"]:
+                        meta["dropped_columns"].append(base_col)
+            # 更新 n_cols
+            if "kept_columns" in meta:
+                meta["n_cols"] = len(meta["kept_columns"])
+            # 更新 shape
+            if "shape" in meta and "n_cols" in meta:
+                meta["shape"][1] = meta["n_cols"]
+            # 更新其他列列表
+            for list_key in ["spike_presence_columns", "random_walk_columns", "drop_marked_columns"]:
+                if list_key in meta:
+                    meta[list_key] = [
+                        c for c in meta[list_key]
+                        if c not in cols_to_drop and "[drop" not in c and ",drop]" not in c
+                    ]
+
+        with open(json_path, "w") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+
+        # 重新计算 num_observations（如果提供了 CSV 路径）
+        if csv_path is not None:
+            _recalculate_num_observations(json_path, csv_path)
+
+    except Exception as e:
+        print(f"    ⚠️ 更新 JSON 失败 ({json_path}): {e}")
 
 
 def main():
@@ -1138,14 +1365,19 @@ def main():
     parser.add_argument(
         "--missing_rate_thresh",
         type=float,
-        default=0.2,
-        help="允许的最大缺失率（默认: 0.2）"
+        default=0.3,
+        help="允许的最大缺失率（默认: 0.3）"
     )
     parser.add_argument(
         "--output_dir",
         type=str,
         default="./data",
         help="输出根目录（默认: ./data）"
+    )
+    parser.add_argument(
+        "--auto_drop",
+        action="store_true",
+        help="自动删除不符合要求的列。默认 False（仅检查不删除），所有列都会保留在输出中，但会标记建议删除的列"
     )
 
     # 数据集清理模式的参数
@@ -1172,8 +1404,20 @@ def main():
         action="store_true",
         help="只显示将要执行的操作，不实际修改文件"
     )
+    parser.add_argument(
+        "--remove_drop_marked",
+        action="store_true",
+        help="删除所有带 [drop] 标记的 variate（列），并更新对应的 JSON 文件"
+    )
 
     args = parser.parse_args()
+
+    # 清理模式：删除所有带 [drop] 标记的 variate
+    if args.remove_drop_marked:
+        if args.target_dir is None:
+            parser.error("--remove_drop_marked 需要同时指定 --target_dir")
+        remove_drop_marked_variates(args.target_dir, dry_run=args.dry_run)
+        return
 
     # 清理模式：移除 variate（支持逗号分隔的多个值）
     if args.remove_variate is not None:
@@ -1244,6 +1488,7 @@ def main():
             output_json_path=output_json_path,
             freq=freq,
             missing_rate_thresh=args.missing_rate_thresh,
+            auto_drop=args.auto_drop,
             verbose=True
         )
 
@@ -1307,6 +1552,10 @@ def main():
         # {(var1, var2): {"high_count": 0, "high_series": [], "high_corr_values": [], "all_corr_values": [], "all_series": []}}
         corr_dup_stats = {}
 
+        # 用于数据集级别的统计
+        series_lengths = []  # 每个series的长度
+        total_observations = 0  # 所有series的observations总和
+
         for csv_file in csv_files:
             csv_path = os.path.join(input_path, csv_file)
             csv_name = os.path.splitext(csv_file)[0]
@@ -1320,6 +1569,7 @@ def main():
                 output_json_path=output_json_path,
                 freq=inferred_freq,  # 使用统一的频率
                 missing_rate_thresh=args.missing_rate_thresh,
+                auto_drop=args.auto_drop,
                 verbose=True
             )
 
@@ -1327,6 +1577,13 @@ def main():
                 success_count += 1
                 total_rows += len(cleaned_df)
                 total_cols += len(cleaned_df.columns)
+
+                # 收集数据集级别的统计信息
+                series_length = len(cleaned_df)
+                series_lengths.append(series_length)
+                # 从result中获取num_observations（如果存在）
+                num_obs = result.get("_meta", {}).get("num_observations", 0)
+                total_observations += num_obs
 
                 # 收集每个 variate 的统计信息
                 for col, col_result in result.items():
@@ -1443,9 +1700,15 @@ def main():
                 "freq": inferred_freq,
                 "num_series": len(csv_files),
                 "success_count": success_count,
-                "variates": {},
-                "correlation_duplicates": {}
+                "variates": {}
             }
+
+            # 添加数据集级别的统计信息（仅当有多个series时）
+            if len(csv_files) > 1 and series_lengths:
+                variate_summary["num_observations"] = total_observations
+                variate_summary["max_series_length"] = max(series_lengths)
+                variate_summary["min_series_length"] = min(series_lengths)
+                variate_summary["avg_series_length"] = round(sum(series_lengths) / len(series_lengths), 2)
             for variate, stats in variate_stats.items():
                 total = stats["total"]
                 variate_summary["variates"][variate] = {
@@ -1460,40 +1723,12 @@ def main():
                     "kept_series": stats["kept_series"]
                 }
 
-            # 保存 correlation_duplicates 统计
-            for pair, stats in corr_dup_stats.items():
-                pair_key = f"{pair[0]} <-> {pair[1]}"
+            # 注意：不再保存 correlation_duplicates 字段，但保留计算用于打印
 
-                # 计算三种平均相关系数
-                high_corr_values = stats["high_corr_values"]
-                all_corr_values = stats["all_corr_values"]
-
-                avg_corr_high = sum(high_corr_values) / len(high_corr_values) if high_corr_values else None
-                avg_corr_all = sum(all_corr_values) / len(all_corr_values) if all_corr_values else None
-
-                # 计算非高相关 series 上的平均值
-                low_corr_values = []
-                high_series_set = set(stats["high_series"])
-                for i, series in enumerate(stats["all_series"]):
-                    if series not in high_series_set:
-                        low_corr_values.append(all_corr_values[i])
-                avg_corr_low = sum(low_corr_values) / len(low_corr_values) if low_corr_values else None
-
-                variate_summary["correlation_duplicates"][pair_key] = {
-                    "high_count": stats["high_count"],
-                    "total_count": len(all_corr_values),
-                    "high_ratio": round(stats["high_count"] / len(all_corr_values), 4) if all_corr_values else 0,
-                    "avg_corr_high": round(avg_corr_high, 4) if avg_corr_high is not None else None,
-                    "avg_corr_low": round(avg_corr_low, 4) if avg_corr_low is not None else None,
-                    "avg_corr_all": round(avg_corr_all, 4) if avg_corr_all is not None else None,
-                    "high_series": stats["high_series"],
-                    "all_series": stats["all_series"]
-                }
-
-            summary_json_path = os.path.join(json_output_dir, "_variate_summary.json")
+            summary_json_path = os.path.join(json_output_dir, "_summary.json")
             with open(summary_json_path, "w") as f:
                 json.dump(variate_summary, f, indent=4, ensure_ascii=False)
-            print(f"[PreprocessPipeline] Variate 汇总已保存至: {summary_json_path}")
+            print(f"[PreprocessPipeline] 汇总已保存至: {summary_json_path}")
 
             # 打印 correlation_duplicates 统计（如果有高相关的）
             high_corr_exists = any(stats["high_count"] > 0 for stats in corr_dup_stats.values())
