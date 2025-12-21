@@ -7,7 +7,7 @@ Usage:
 
 Input format:
     Expects preprocessed CSV files from preprocess.py located at:
-    ./data/processed_csv/{dataset}/{freq}/item_*.csv
+    ./data/processed_csv/{dataset}/{freq}/*.csv
 
     Each CSV file has format:
     - First column: timestamp
@@ -112,22 +112,22 @@ def convert_multi_csv_to_panel(
     Convert multiple CSV files from preprocess.py output to tsfeatures panel format.
 
     Args:
-        csv_dir: Directory containing item_*.csv files
+        csv_dir: Directory containing *.csv files
         split_ratios: [train_ratio, val_ratio, test_ratio]
 
     Returns:
         panel_df: DataFrame with columns ['unique_id', 'ds', 'y', 'split']
                   unique_id format: "{series_name}_{variate_name}"
     """
-    csv_files = sorted(glob.glob(os.path.join(csv_dir, "item_*.csv")))
+    csv_files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
 
     if not csv_files:
-        raise ValueError(f"No item_*.csv files found in {csv_dir}")
+        raise ValueError(f"No *.csv files found in {csv_dir}")
 
     all_records = []
 
     for csv_path in csv_files:
-        series_name = os.path.splitext(os.path.basename(csv_path))[0]  # e.g., "item_0"
+        series_name = os.path.splitext(os.path.basename(csv_path))[0]  # e.g., "item_0" or any filename
 
         df = pd.read_csv(csv_path, parse_dates=[0])
         time_col = df.columns[0]
@@ -183,7 +183,7 @@ def compute_dataset_features(
     Args:
         dataset_name: The name of the dataset (e.g., "IMOS", "ETTh1").
         freq: Frequency string (e.g., "H", "D", "15T").
-        csv_dir: Path to directory containing processed CSV files (item_*.csv).
+        csv_dir: Path to directory containing processed CSV files (*.csv).
         output_dir: Base directory for output files.
         test_split: Test set ratio (from datasets.yaml).
         split_mode: Which split to compute features on:
@@ -280,7 +280,7 @@ def count_variates_in_dir(csv_dir: str) -> tuple[int, int]:
     Returns:
         (n_series, n_total_variates): Number of series and total variate count
     """
-    csv_files = sorted(glob.glob(os.path.join(csv_dir, "item_*.csv")))
+    csv_files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
     if not csv_files:
         return 0, 0
 
@@ -324,7 +324,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Process single dataset (expects data at ./data/processed_csv/IMOS/15T/item_*.csv)
+    # Process single dataset (expects data at ./data/processed_csv/IMOS/15T/*.csv)
     python -m timebench.feature.features_runner --dataset IMOS/15T
 
     # Process all datasets in config
@@ -445,7 +445,7 @@ Examples:
         if not os.path.isdir(dataset_csv_dir):
             raise FileNotFoundError(
                 f"Dataset directory not found: {dataset_csv_dir}\n"
-                f"Expected preprocessed CSV files at: {dataset_csv_dir}/item_*.csv\n"
+                f"Expected preprocessed CSV files at: {dataset_csv_dir}/*.csv\n"
                 f"Run preprocess.py first to generate the data."
             )
 
