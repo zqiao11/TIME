@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Optional
 
 import datasets
+import numpy as np
 import pyarrow.compute as pc
 import yaml
 from dotenv import load_dotenv
@@ -99,6 +100,11 @@ def get_dataset_settings(
 
 def itemize_start(data_entry: DataEntry) -> DataEntry:
     data_entry["start"] = data_entry["start"].item()
+    # Fix target shape: if target is 2D with shape (1, N), squeeze it to 1D for univariate case
+    if "target" in data_entry:
+        target = data_entry["target"]
+        if isinstance(target, np.ndarray) and target.ndim == 2 and target.shape[0] == 1:
+            data_entry["target"] = np.squeeze(target, axis=0)
     return data_entry
 
 class MultivariateToUnivariate(Transformation):
