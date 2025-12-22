@@ -196,7 +196,7 @@ def compute_dataset_features(
     """
     start = time.time()
 
-    # Calculate split ratios: [train_ratio, 0, test_ratio] (no validation)
+    # Calculate split ratios: [train_ratio, 0, test_ratio] (no validation during tsfeature computation)
     train_ratio = 1.0 - test_split
     split_ratios = [train_ratio, 0.0, test_split]
 
@@ -212,7 +212,7 @@ def compute_dataset_features(
         return
 
     print(f"[Start] Processing {dataset_name}/{freq} ({split_mode}) from {csv_dir}")
-    print(f"        test_split={test_split}, split_ratios={split_ratios}")
+    print(f"        test_split={test_split}")
 
     # Generate panel from CSV directory
     print("Loading CSV files and converting to panel format...")
