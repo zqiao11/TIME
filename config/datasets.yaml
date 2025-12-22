@@ -52,37 +52,102 @@ defaults:
 # =============================================================================
 
 datasets:
-  # ----- GIFT-Eval 官方数据集示例 -----
-
-  bitbrains_rnd/5T:
+  Water_Quality_Darwin/15T:
     test_split: 0.1
-    short:
-      prediction_length: 48     # 48 * 5min = 4 hours
-    medium:
-      prediction_length: 288    # 288 * 5min = 24 hours
-    long:
-      prediction_length: 576    # 576 * 5min = 48 hours
-
-  # ----- 自定义数据集示例 -----
-
-  IMOS/15T:
-    test_split: 0.1
-    val_split: 0.1 
+    val_split: 0.1
     short:
       prediction_length: 16     # 16 * 15min = 4 hours
     medium:
       prediction_length: 96    # 96 * 15min = 1 day
     long:
-      prediction_length: 672   # 672 * 15min = 7 days
+      prediction_length: 384   # 384 * 15min = 3 days
 
-  # ----- 更多数据集配置示例 -----
-  # example_dataset/H:
-  #   test_split: 0.15          # 该数据集使用 15% 作为测试集
-  #   val_split: 0.1            # 该数据集使用 10% 作为验证集
-  #   short:
-  #     prediction_length: 24   # 24 hours
-  #   medium:
-  #     prediction_length: 168  # 7 days
-  #   long:
-  #     prediction_length: 720  # 30 days
+  SG_Weather/D:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 3
+    medium:
+      prediction_length: 7
+    long:
+      prediction_length: 14  # 14 days is the limit for weather forecasting
 
+  SG_PM25/H:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 24
+    medium:
+      prediction_length: 72  # 3 days
+    long:
+      prediction_length: 168  # 7 days
+
+  SG_Carpark/15T:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 8     # 2 hours
+    medium:
+      prediction_length: 96    # 1 day
+    long:
+      prediction_length: 672   # 1 week
+
+  solar_generation/H:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 24
+    medium:
+      prediction_length: 72
+    long:
+      prediction_length: 168
+
+  epf_electricity_price/H:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 24
+    medium:
+      prediction_length: 72
+    long:
+      prediction_length: 168
+
+  OpenElectricity_NEM/5T:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 12    # 1h
+    medium:
+      prediction_length: 48    # 4h
+    long:
+      prediction_length: 288   # 24h
+
+  EWELD_Load/15T:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 24     # 16 * 15min = 4 hours
+    medium:
+      prediction_length: 96    # 96 * 15min = 1 day
+    long:
+      prediction_length: 672   # 384 * 15min = 3 days
+
+  NE_China_Wind/H:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 24
+    medium:
+      prediction_length: 72
+    long:
+      prediction_length: 168
+
+  AU_Occupancy/D:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 3
+    medium:
+      prediction_length: 7
+    long:
+      prediction_length: 14

@@ -126,12 +126,12 @@ Due to the varying methods required for data scraping, this stage is not include
 
 0. **Download data**
 
-    We use IMOS data as example. Download the data folder from [Google Drive](https://drive.google.com/drive/u/0/folders/1OAKZ0MilP0vtfuzcqq-WONw-PS0s3n3u). The curated data have 8 MTS from different stations and period, each with 8 variates.
+    We use Water_Quality_Darwin data as example. Download the data folder from [Google Drive](https://drive.google.com/drive/u/0/folders/1OAKZ0MilP0vtfuzcqq-WONw-PS0s3n3u). The curated data have 8 MTS from different stations and period, each with 8 variates.
 
 1. **Preprocess data**:
 
    ```bash
-   python -m timebench.preprocess --input_path PATH_IMOS --dataset IMOS --freq 15T
+   python -m timebench.preprocess --input_path PATH_Water_Quality_Darwin --dataset Water_Quality_Darwin --freq 15T
    ```
 
    * `dataset`: Name of the dataset to be saved.
@@ -141,17 +141,17 @@ Due to the varying methods required for data scraping, this stage is not include
    ```bash
    ============================================================
     [PreprocessPipeline] 批量处理完成!
-      数据集: IMOS
+      数据集: Water_Quality_Darwin
       频率: 15T
       成功: 8/8
       总行数: 117099
       总列数: 47
-      输出 CSV 目录: ./data/processed_csv/IMOS/15T
-      输出 JSON 目录: ./data/processed_summary/IMOS/15T
+      输出 CSV 目录: ./data/processed_csv/Water_Quality_Darwin/15T
+      输出 JSON 目录: ./data/processed_summary/Water_Quality_Darwin/15T
     ============================================================
 
     ============================================================
-    [PreprocessPipeline] Variate 汇总统计 (数据集: IMOS)
+    [PreprocessPipeline] Variate 汇总统计 (数据集: Water_Quality_Darwin)
     ============================================================
     Variate                       保留率          RW率          SP率
     ------------------------------------------------------------
@@ -162,10 +162,10 @@ Due to the varying methods required for data scraping, this stage is not include
     TEMP                   8/8   (100.0%)   7/8   ( 87.5%)   0/8   (  0.0%)
     TURB                   7/8   ( 87.5%)   1/8   ( 12.5%)   0/8   (  0.0%)
     ============================================================
-    [PreprocessPipeline] Variate 汇总已保存至: ./data/processed_summary/IMOS/15T/_variate_summary.json
+    [PreprocessPipeline] Variate 汇总已保存至: ./data/processed_summary/Water_Quality_Darwin/15T/_variate_summary.json
 
     ====================================================================================================
-    [PreprocessPipeline] 高相关变量对统计 (数据集: IMOS)
+    [PreprocessPipeline] 高相关变量对统计 (数据集: Water_Quality_Darwin)
     ====================================================================================================
     变量对                                     高相关次数       r均值(高)       r均值(低)       r均值(全)
     ----------------------------------------------------------------------------------------------------
@@ -181,13 +181,13 @@ Due to the varying methods required for data scraping, this stage is not include
       - TURB: 在 1/8 个 series 上被丢弃
         被丢弃的 series: item_7.csv
 
-      批量移除命令: python -m timebench.preprocess --remove_series item_7.csv --target_dir ./data/processed_csv/IMOS/15T
+      批量移除命令: python -m timebench.preprocess --remove_series item_7.csv --target_dir ./data/processed_csv/Water_Quality_Darwin/15T
 
     📌 以下变量对在多数 series 上高度相关，考虑移除其中一个:
       - CNDC <-> TEMP: 在 5/8 个 series 上高相关
         r均值: 高相关=0.9888, 非高相关=0.7181, 全部=0.8873
-        移除 CNDC: python -m timebench.preprocess --remove_variate CNDC --target_dir ./data/processed_csv/IMOS/15T
-        移除 TEMP: python -m timebench.preprocess --remove_variate TEMP --target_dir ./data/processed_csv/IMOS/15T
+        移除 CNDC: python -m timebench.preprocess --remove_variate CNDC --target_dir ./data/processed_csv/Water_Quality_Darwin/15T
+        移除 TEMP: python -m timebench.preprocess --remove_variate TEMP --target_dir ./data/processed_csv/Water_Quality_Darwin/15T
 
     💡 提示:
       - 如果某个 variate 在大多数 series 上都被丢弃 → 移除该 variate
@@ -200,38 +200,38 @@ Due to the varying methods required for data scraping, this stage is not include
    The summary shows two isses:
    1. Variate `TURB` has excessive missing values on series `item_7`. Since this issue of `TURB` is only observed in one series, we can simply discard series `item_7` and keep `TURB` variate in the dataset.
       ```bash
-      python -m timebench.preprocess --remove_series item_7.csv --target_dir ./data/processed_csv/IMOS/15T
+      python -m timebench.preprocess --remove_series item_7.csv --target_dir ./data/processed_csv/Water_Quality_Darwin/15T
       ```
 
       Note: if `TURB` encounter issues on multiple series, we need to consider discarding variate `TURB` entirely from the dataset.
       ```bash
       # Don't run this command in this example!
-      python -m timebench.preprocess --remove_variate TURB --target_dir ./data/processed_csv/IMOS/15T
+      python -m timebench.preprocess --remove_variate TURB --target_dir ./data/processed_csv/Water_Quality_Darwin/15T
       ```
 
       These commands will apply the corresponding changes directly to the processed CSV files.
 
     2. Two variates are highly correlated (correlation > 95%) on 5 series, raising the question of potential redundancy. We need to consider if we need to discard one of the variates from the dataset. Since the correlaltion is not very high on the remaining 3 series and the schematic meaning of these variates are very different, we decide to keep both variates.
 
-    Therefore, the final processed IMOS dataset has 7 MTS with 8 variates.
+    Therefore, the final processed Water_Quality_Darwin dataset has 7 MTS with 8 variates.
 
 2. **Set config**
 
-    The configuration for IMOS data has been established. For new data setup, see the **Configuration** section below.
+    The configuration for Water_Quality_Darwin data has been established. For new data setup, see the **Configuration** section below.
 
 3. **Build hf_dataset**:
 
    ```bash
    python -m timebench.evaluation.dataset_builder \
-     --csv-dir ./data/processed_csv/IMOS/15T \
-     --output-path ./datasets/GIFT-Eval/IMOS/15T \
+     --csv-dir ./data/processed_csv/Water_Quality_Darwin/15T \
+     --output-path ./datasets/GIFT-Eval/Water_Quality_Darwin/15T \
      --freq 15T
    ```
 
 4. **Extract features**:
 
    ```bash
-   python -m timebench.feature.features_runner --dataset IMOS/15T
+   python -m timebench.feature.features_runner --dataset Water_Quality_Darwin/15T
    ```
 
 5. **Run evaluation**:
@@ -239,7 +239,7 @@ Due to the varying methods required for data scraping, this stage is not include
    Here we use moirai to evalute. For other TSFMs, we need to create a new python file for each, following [gift-eval examples](https://github.com/SalesforceAIResearch/gift-eval/tree/main/notebooks).
 
    ```bash
-   python experiments/moirai.py --dataset "IMOS/15T" --terms short medium long
+   python experiments/moirai.py --dataset "Water_Quality_Darwin/15T" --terms short medium long
    ```
 
 
@@ -257,7 +257,7 @@ Windows are automatically calculated based on `test_split` and `prediction_lengt
 
 ```yaml
 datasets:
-  IMOS/15T:
+  Water_Quality_Darwin/15T:
     test_split: 0.1
     val_split: 0.1
     short:
