@@ -722,7 +722,7 @@ def save_result_to_json(result: dict, json_path: str) -> None:
             result_serializable[key] = convert_to_serializable(value)
 
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
-    with open(json_path, "w") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(result_serializable, f, indent=4, ensure_ascii=False)
     print(f"[PreprocessPipeline] 详细结果已保存至: {json_path}")
 
@@ -921,7 +921,7 @@ def _recalculate_num_observations(json_path: str, csv_path: str) -> None:
         if "_meta" in data:
             data["_meta"]["num_observations"] = num_obs
 
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
         print(f"    ⚠️ 重新计算 num_observations 失败 ({json_path}): {e}")
@@ -967,7 +967,7 @@ def _update_json_remove_variate(json_path: str, variate_name: str, csv_path: str
                     meta[list_key] = [c for c in meta[list_key]
                                       if re.sub(r'\[.*?\]', '', c) != variate_name]
 
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
         # 重新计算 num_observations（如果提供了 CSV 路径）
@@ -1000,7 +1000,7 @@ def _update_summary_json_remove_variate(summary_json_path: str, variate_name: st
         if csv_dir is not None:
             _update_summary_json_remove_series(summary_json_path, csv_dir)
         else:
-            with open(summary_json_path, "w") as f:
+            with open(summary_json_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
 
     except Exception as e:
@@ -1202,7 +1202,7 @@ def _update_summary_json_remove_series(summary_json_path: str, csv_dir: str) -> 
         if "correlation_duplicates" in data:
             del data["correlation_duplicates"]
 
-        with open(summary_json_path, "w") as f:
+        with open(summary_json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
     except Exception as e:
@@ -1329,7 +1329,7 @@ def _update_json_remove_drop_variates(json_path: str, cols_to_drop: list[str], c
                         if c not in cols_to_drop and "[drop" not in c and ",drop]" not in c
                     ]
 
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
         # 重新计算 num_observations（如果提供了 CSV 路径）
@@ -1726,7 +1726,7 @@ def main():
             # 注意：不再保存 correlation_duplicates 字段，但保留计算用于打印
 
             summary_json_path = os.path.join(json_output_dir, "_summary.json")
-            with open(summary_json_path, "w") as f:
+            with open(summary_json_path, "w", encoding="utf-8") as f:
                 json.dump(variate_summary, f, indent=4, ensure_ascii=False)
             print(f"[PreprocessPipeline] 汇总已保存至: {summary_json_path}")
 

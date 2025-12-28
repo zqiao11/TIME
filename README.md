@@ -223,8 +223,8 @@ Due to the varying methods required for data scraping, this stage is not include
 
    ```bash
    python -m timebench.evaluation.dataset_builder \
-     --csv-dir ./data/processed_csv/Water_Quality_Darwin/15T \
-     --output-path ./datasets/GIFT-Eval/Water_Quality_Darwin/15T \
+     --csv-dir /data/processed_csv/Water_Quality_Darwin/15T \
+     --output-path /datasets/hf_dataset/Water_Quality_Darwin/15T \
      --freq 15T
    ```
 
