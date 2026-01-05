@@ -8,14 +8,15 @@ Arrow Dataset Schema:
 - start: timestamp[s] - 起始时间戳
 - freq: str - 时间频率 (如 "5T", "15T", "D")
 - target: list[list[float]] - 形状 [num_dims, seq_len]
+- variate_names: list[str] - variate 名称列表 (仅多变量模式，可选)
 - past_feat_dynamic_real: list[list[float]] - 形状 [num_features, seq_len] (可选)
 """
 
+import argparse
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Union
 
-import argparse
 import numpy as np
 import pandas as pd
 from datasets import Dataset, Features, Sequence, Value
@@ -25,10 +26,10 @@ def dataframes_to_generator(
     dfs: Union[pd.DataFrame, List[pd.DataFrame]],
     freq: Optional[str] = None,
     to_univariate: bool = False,
-    item_prefix: str = "",
     num_dims: Optional[int] = None,
     include_past_feat: bool = False,
     num_past_feat: int = 0,
+    csv_names: Optional[List[str]] = None,
 ) -> tuple[Callable[[], Generator[dict[str, Any], None, None]], Features]:
     """
     Convert pandas DataFrames to a HuggingFace-compatible generator and schema.
@@ -45,8 +46,6 @@ def dataframes_to_generator(
     to_univariate : bool
         If True: each column of each DataFrame becomes a separate item (UTS mode)
         If False: each DataFrame becomes a single multivariate item (MTS mode)
-    item_prefix : str
-        Prefix for item_id naming.
     num_dims : int, optional
         Fixed number of dimensions for target. If None, inferred from data.
     include_past_feat : bool
@@ -88,6 +87,7 @@ def dataframes_to_generator(
                 feature=Sequence(Value("float32")),
                 length=num_dims
             ),
+            variate_names=Sequence(Value("string"), length=num_dims),  # 保存 variate 名称
         )
         if include_past_feat and num_past_feat > 0:
             feature_dict["past_feat_dynamic_real"] = Sequence(
@@ -95,6 +95,17 @@ def dataframes_to_generator(
                 length=num_past_feat
             )
         features = Features(feature_dict)
+
+    # Determine naming strategy based on number of CSVs and variates
+    num_csvs = len(dfs)
+    # Check number of variates from first DataFrame (before processing)
+    # We need to peek at the first DataFrame to determine variate count
+    first_df_peek = dfs[0]
+    if not isinstance(first_df_peek.index, pd.DatetimeIndex):
+        # If timestamp is in first column, exclude it
+        num_variates = len(first_df_peek.columns) - 1
+    else:
+        num_variates = len(first_df_peek.columns)
 
     # Build generator
     def gen_func() -> Generator[dict[str, Any], None, None]:
@@ -107,6 +118,22 @@ def dataframes_to_generator(
                 df = df.set_index(df.columns[0])
 
             col_names = df.columns.tolist()
+
+            # Remove suffixes [rw], [sp], or [drop] from column names
+            suffixes_to_remove = ["[rw]", "[sp]", "[drop]"]
+            cleaned_col_names = []
+            for col in col_names:
+                cleaned_col = col
+                for suffix in suffixes_to_remove:
+                    cleaned_col = cleaned_col.replace(suffix, "")
+                cleaned_col_names.append(cleaned_col)
+
+            # Rename columns in DataFrame if any suffix was removed
+            if cleaned_col_names != col_names:
+                df.columns = cleaned_col_names
+                col_names = cleaned_col_names
+
+            csv_name = csv_names[df_idx]
 
             # Determine frequency:
             # - if freq is provided, use it directly (higher priority than infer)
@@ -124,9 +151,24 @@ def dataframes_to_generator(
 
             if to_univariate:
                 # Each variate is one item
+                # Naming logic:
+                # a) Multiple CSVs + 1 variate: item_id = csv_name
+                # b) 1 CSV + multiple variates: item_id = variate_name
+                # c) Multiple CSVs + multiple variates: item_id = {csv_name}_{variate_name}
                 for i, col in enumerate(col_names):
+                    if num_csvs > 1 and num_variates == 1:
+                        # Case a: Multiple CSVs + 1 variate
+                        item_id = csv_name
+                    elif num_csvs == 1:
+                        # Case b: 1 CSV (with 1 or multiple variates)
+                        # If 1 variate, use variate name; if multiple, also use variate name
+                        item_id = col
+                    else:
+                        # Case c: Multiple CSVs + multiple variates
+                        item_id = f"{csv_name}_{col}"
+
                     item = {
-                        "item_id": f"{item_prefix}_{df_idx}_{col}",
+                        "item_id": item_id,
                         "start": df.index[0],
                         "freq": effective_freq,
                         "target": df[col].to_numpy(dtype=np.float32),
@@ -134,12 +176,20 @@ def dataframes_to_generator(
                     yield item
             else:
                 # Each DataFrame is one multivariate item
+                # item_id = csv_name
+                # Ensure col_names order matches target order
                 target = df.to_numpy(dtype=np.float32).T  # shape: (var, time)
+                # col_names already matches the order of columns in df, which matches target
                 item = {
-                    "item_id": f"{item_prefix}{df_idx}",
+                    "item_id": csv_name,
                     "start": df.index[0],
                     "freq": effective_freq,
                     "target": target,
+                    # Note: variate_names is stored in each item for schema consistency,
+                    # but all items in the same dataset have identical variate_names.
+                    # The Dataset class uses caching to optimize reading (only reads once).
+                    # col_names order matches target order (each row in target corresponds to col_names[i])
+                    "variate_names": col_names,
                 }
                 if include_past_feat and num_past_feat > 0:
                     seq_len = target.shape[1]
@@ -157,7 +207,7 @@ def build_dataset_from_csvs(
     pattern: str = "*.csv",
     freq: Optional[str] = None,
     to_univariate: bool = False,
-    item_prefix: str = "",
+    # item_prefix: str = "",
     include_past_feat: bool = False,
     num_past_feat: int = 0,
 ) -> Dataset:
@@ -178,8 +228,6 @@ def build_dataset_from_csvs(
         inference fails, a ValueError is raised.
     to_univariate : bool
         Convert to univariate mode.
-    item_prefix : str
-        Prefix for item IDs.
     include_past_feat : bool
         Include past_feat_dynamic_real field.
     num_past_feat : int
@@ -202,6 +250,9 @@ def build_dataset_from_csvs(
     # Load all DataFrames
     dfs = [pd.read_csv(path, parse_dates=[0]) for path in csv_paths]
 
+    # Extract CSV names (without extension) for item_id naming
+    csv_names = [Path(path).stem for path in csv_paths]
+
     # Print statistics
     lengths = [len(df) for df in dfs]
     print(f"Time series lengths: min={min(lengths)}, max={max(lengths)}, mean={np.mean(lengths):.2f}")
@@ -211,9 +262,9 @@ def build_dataset_from_csvs(
         dfs=dfs,
         freq=freq,
         to_univariate=to_univariate,
-        item_prefix=item_prefix,
         include_past_feat=include_past_feat,
         num_past_feat=num_past_feat,
+        csv_names=csv_names,
     )
 
     # Create and save dataset
@@ -269,12 +320,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Convert each column to a separate univariate series (UTS mode).",
     )
-    parser.add_argument(
-        "--item-prefix",
-        type=str,
-        default="",
-        help="Prefix for item_id naming.",
-    )
 
     args = parser.parse_args()
 
@@ -284,5 +329,4 @@ if __name__ == "__main__":
         pattern=args.pattern,
         freq=args.freq,
         to_univariate=args.to_univariate,
-        item_prefix=args.item_prefix,
     )

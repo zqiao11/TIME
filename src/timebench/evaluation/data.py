@@ -7,7 +7,7 @@ import os
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 import datasets
 import pyarrow.compute as pc
@@ -208,6 +208,50 @@ class Dataset:
             return 0
         feat = self.hf_dataset[0]["past_feat_dynamic_real"]
         return feat.shape[0] if len(feat.shape) > 1 else 1
+
+    @cached_property
+    def _variate_names(self) -> Optional[List[str]]:
+        """
+        Cached variate names for the dataset.
+        Since all series in the same dataset have the same variates,
+        we only need to read once and cache it.
+        """
+        if self.target_dim == 1:
+            # Univariate mode: variate name is embedded in item_id
+            return None
+
+        # Multivariate mode: check if variate_names field exists in first item
+        # All items have the same variate_names, so we only read from the first one
+        if len(self.hf_dataset) > 0 and "variate_names" in self.hf_dataset[0]:
+            variate_names = self.hf_dataset[0]["variate_names"]
+            # Convert numpy array to list if needed
+            if hasattr(variate_names, 'tolist'):
+                return variate_names.tolist()
+            return list(variate_names) if isinstance(variate_names, (list, tuple)) else None
+
+        return None
+
+    def get_variate_names(self) -> Optional[List[str]]:
+        """
+        Get variate names for a specific item.
+
+        Note: In the same dataset, all series have the same variate names.
+        This method returns the cached variate names regardless of item_idx.
+
+        Parameters
+        ----------
+        item_idx : int
+            Index of the item (ignored, kept for API compatibility).
+            All items in the same dataset have the same variate names.
+
+        Returns
+        -------
+        Optional[List[str]]
+            List of variate names if available, None otherwise.
+            For univariate mode, returns None (variate name is in item_id).
+            For multivariate mode, returns the list of variate names if stored.
+        """
+        return self._variate_names
 
     @cached_property
     def test_split(self) -> float:
