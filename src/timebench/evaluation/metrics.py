@@ -1,19 +1,23 @@
 """
 Per-window metrics computation for time series forecasting evaluation.
+Aligned with GluonTS implementation.
 
 Supported metrics:
-- MSE: Mean Squared Error
-- MAE: Mean Absolute Error  
-- RMSE: Root Mean Squared Error
-- MAPE: Mean Absolute Percentage Error
-- sMAPE: Symmetric Mean Absolute Percentage Error
-- MASE: Mean Absolute Scaled Error
-- ND: Normalized Deviation
-- CRPS: Continuous Ranked Probability Score
-- Quantile Losses: at 0.1, 0.5, 0.9 quantiles
+- MSE: Mean Squared Error (using median forecast, aligned with GluonTS MSE[0.5])
+- MAE: Mean Absolute Error (using median forecast)
+- RMSE: Root Mean Squared Error (using median forecast)
+- MAPE: Mean Absolute Percentage Error (using median forecast, returns fraction)
+- sMAPE: Symmetric Mean Absolute Percentage Error (using median forecast, range [0, 2])
+- MASE: Mean Absolute Scaled Error (using median forecast)
+- ND: Normalized Deviation (using median forecast)
+- CRPS: Continuous Ranked Probability Score (MeanWeightedSumQuantileLoss)
 """
 
 import numpy as np
+
+
+# Default quantile levels for CRPS computation (aligned with GluonTS)
+DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
 
 def compute_per_window_metrics(
@@ -22,13 +26,16 @@ def compute_per_window_metrics(
     ground_truth: np.ndarray,
     context: np.ndarray,
     seasonality: int = 1,
+    quantile_levels: list[float] = None,
 ) -> dict[str, np.ndarray]:
     """
     Compute evaluation metrics for each prediction window.
-    
+    All metrics are aligned with GluonTS implementation.
+
     Args:
-        predictions_mean: Mean predictions with shape 
+        predictions_mean: Mean predictions with shape
             (num_series, num_windows, num_variates, pred_len)
+            Note: This is not used for most metrics; median from samples is used instead.
         predictions_samples: Sampled predictions with shape
             (num_series, num_windows, num_samples, num_variates, pred_len)
         ground_truth: Ground truth values with shape
@@ -37,14 +44,18 @@ def compute_per_window_metrics(
             (num_series, num_windows, num_variates, max_ctx_len)
             Note: Shorter contexts are NaN-padded
         seasonality: Seasonal period length for MASE computation
-        
+        quantile_levels: Quantile levels for CRPS computation.
+            Defaults to [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+
     Returns:
         Dictionary of metric arrays, each with shape (num_series, num_windows, num_variates)
-        Keys: MSE, MAE, RMSE, MAPE, sMAPE, MASE, ND, CRPS, 
-              QuantileLoss_0.1, QuantileLoss_0.5, QuantileLoss_0.9
+        Keys: MSE, MAE, RMSE, MAPE, sMAPE, MASE, ND, CRPS
     """
+    if quantile_levels is None:
+        quantile_levels = DEFAULT_QUANTILE_LEVELS
+
     num_series, num_windows, num_variates, pred_len = predictions_mean.shape
-    
+
     # Initialize metric arrays: (num_series, num_windows, num_variates)
     mse = np.zeros((num_series, num_windows, num_variates))
     mae = np.zeros((num_series, num_windows, num_variates))
@@ -53,80 +64,90 @@ def compute_per_window_metrics(
     smape = np.zeros((num_series, num_windows, num_variates))
     mase = np.zeros((num_series, num_windows, num_variates))
     nd = np.zeros((num_series, num_windows, num_variates))
-    
-    # Quantile losses for specific quantiles
-    quantiles = [0.1, 0.5, 0.9]
-    quantile_losses = {q: np.zeros((num_series, num_windows, num_variates)) for q in quantiles}
-    
-    # CRPS (Continuous Ranked Probability Score)
+
+    # CRPS (Continuous Ranked Probability Score) - using weighted quantile loss
     crps = np.zeros((num_series, num_windows, num_variates))
-    
+
     for s in range(num_series):
         for w in range(num_windows):
             for v in range(num_variates):
-                pred = predictions_mean[s, w, v]  # (pred_len,)
                 samples = predictions_samples[s, w, :, v]  # (num_samples, pred_len)
                 gt = ground_truth[s, w, v]  # (pred_len,)
                 ctx = context[s, w, v]  # (max_ctx_len,)
                 ctx = ctx[~np.isnan(ctx)]  # Remove NaN padding
-                
-                # MSE
-                mse[s, w, v] = np.mean((pred - gt) ** 2)
-                
-                # MAE
-                mae[s, w, v] = np.mean(np.abs(pred - gt))
-                
-                # RMSE
+
+                # Compute median (0.5 quantile) forecast - used for most metrics
+                median_pred = np.median(samples, axis=0)  # (pred_len,)
+
+                # Compute error using median forecast
+                error = gt - median_pred
+                abs_error = np.abs(error)
+
+                # MSE (using median forecast, aligned with GluonTS MSE[0.5])
+                # GluonTS: squared_error = (label - forecast)^2
+                mse[s, w, v] = np.mean(error ** 2)
+
+                # MAE (using median forecast)
+                # GluonTS: absolute_error = |label - forecast|
+                mae[s, w, v] = np.mean(abs_error)
+
+                # RMSE (sqrt of MSE)
                 rmse[s, w, v] = np.sqrt(mse[s, w, v])
-                
-                # MAPE (handle zeros in ground truth)
+
+                # MAPE (using median forecast, returns fraction not percentage)
+                # GluonTS: absolute_percentage_error = |error| / |label|
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    mape_vals = np.abs((pred - gt) / gt) * 100
+                    mape_vals = abs_error / np.abs(gt)
                     mape_vals = np.where(np.isfinite(mape_vals), mape_vals, np.nan)
                     mape[s, w, v] = np.nanmean(mape_vals)
-                
-                # sMAPE (symmetric MAPE)
+
+                # sMAPE (using median forecast, range [0, 2])
+                # GluonTS: 2 * |error| / (|label| + |forecast|)
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    smape_vals = 200 * np.abs(pred - gt) / (np.abs(pred) + np.abs(gt))
+                    smape_vals = 2 * abs_error / (np.abs(gt) + np.abs(median_pred))
                     smape_vals = np.where(np.isfinite(smape_vals), smape_vals, np.nan)
                     smape[s, w, v] = np.nanmean(smape_vals)
-                
-                # MASE (Mean Absolute Scaled Error)
+
+                # MASE (Mean Absolute Scaled Error, using median forecast)
+                # GluonTS: |error| / seasonal_error
                 if len(ctx) > seasonality:
                     naive_errors = np.abs(ctx[seasonality:] - ctx[:-seasonality])
-                    scale = np.mean(naive_errors) if len(naive_errors) > 0 else 1.0
-                    if scale > 0:
-                        mase[s, w, v] = mae[s, w, v] / scale
+                    seasonal_error = np.mean(naive_errors) if len(naive_errors) > 0 else 1.0
+                    if seasonal_error > 0:
+                        mase[s, w, v] = mae[s, w, v] / seasonal_error
                     else:
                         mase[s, w, v] = np.nan
                 else:
                     mase[s, w, v] = np.nan
-                
-                # ND (Normalized Deviation)
-                gt_sum = np.sum(np.abs(gt))
-                if gt_sum > 0:
-                    nd[s, w, v] = np.sum(np.abs(pred - gt)) / gt_sum
+
+                # ND (Normalized Deviation, using median forecast)
+                # GluonTS: sum(|error|) / sum(|label|)
+                abs_label_sum = np.sum(np.abs(gt))
+                if abs_label_sum > 0:
+                    nd[s, w, v] = np.sum(abs_error) / abs_label_sum
                 else:
                     nd[s, w, v] = np.nan
-                
-                # Quantile losses
-                for q in quantiles:
-                    q_pred = np.quantile(samples, q, axis=0)  # (pred_len,)
-                    errors = gt - q_pred
-                    quantile_losses[q][s, w, v] = np.mean(
-                        np.where(errors >= 0, q * errors, (q - 1) * errors)
-                    ) * 2  # multiply by 2 for standard quantile loss definition
-                
-                # CRPS (approximate using samples)
-                # CRPS = E[|X - y|] - 0.5 * E[|X - X'|]
-                # where X, X' are independent samples from forecast distribution
-                abs_errors = np.mean(np.abs(samples - gt), axis=0)  # (pred_len,)
-                sample_spread = np.mean(
-                    np.abs(samples[:, np.newaxis, :] - samples[np.newaxis, :, :]), 
-                    axis=(0, 1)
-                )
-                crps[s, w, v] = np.mean(abs_errors - 0.5 * sample_spread)
-    
+
+                # CRPS (MeanWeightedSumQuantileLoss)
+                # GluonTS implementation:
+                # 1. For each quantile q: quantile_loss = 2 * |error * ((pred >= label) - q)|
+                # 2. weighted_sum_quantile_loss[q] = sum(quantile_loss) / sum(|label|)
+                # 3. CRPS = mean(weighted_sum_quantile_loss across all quantiles)
+                if abs_label_sum > 0:
+                    weighted_quantile_losses = []
+                    for q in quantile_levels:
+                        q_pred = np.quantile(samples, q, axis=0)  # (pred_len,)
+                        q_error = gt - q_pred
+                        # GluonTS quantile_loss formula: 2 * |error * ((pred >= label) - q)|
+                        indicator = (q_pred >= gt).astype(float)
+                        q_loss = 2 * np.abs(q_error * (indicator - q))
+                        # Weighted by sum of absolute labels
+                        weighted_ql = np.sum(q_loss) / abs_label_sum
+                        weighted_quantile_losses.append(weighted_ql)
+                    crps[s, w, v] = np.mean(weighted_quantile_losses)
+                else:
+                    crps[s, w, v] = np.nan
+
     return {
         "MSE": mse,
         "MAE": mae,
@@ -135,11 +156,5 @@ def compute_per_window_metrics(
         "sMAPE": smape,
         "MASE": mase,
         "ND": nd,
-        "QuantileLoss_0.1": quantile_losses[0.1],
-        "QuantileLoss_0.5": quantile_losses[0.5],
-        "QuantileLoss_0.9": quantile_losses[0.9],
         "CRPS": crps,
     }
-
-
-
