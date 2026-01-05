@@ -14,31 +14,31 @@ from statsmodels.tsa.stattools import adfuller
 FREQ_MIN_LENGTH = {
     # 秒级; 3 Days
     "S": 3600 * 24 * 3,
-    # 分钟级; 1 Month
+    # 分钟级; 1 Month  # TODO: 2周？
     "T": 60 * 24 * 30,
     "min": 60 * 24 * 30,
-    # 小时级; 3 Months
-    "H": 24 * 30 * 3,
-    "h": 24 * 30 * 3,
-    # 日级; 3 Years
-    "D": 365 * 3,
-    # 周级; 10 Years
-    "W": 52 * 10,
-    # 月级; 20 Years
-    "M": 12 * 20,
-    "MS": 12 * 20,
-    "ME": 12 * 20,
-    # 季度级; 20 Years
-    "Q": 4 * 20,
-    "QS": 4 * 20,
-    "QE": 4 * 20,
+    # 小时级; 1 Month
+    "H": 24 * 30,
+    "h": 24 * 30,
+    # 日级; 0.5 Year
+    "D": 183 * 1,
+    # 周级; 2 Year
+    "W": 52 * 2,
+    # 月级; 3 Years
+    "M": 12 * 3,
+    "MS": 12 * 3,
+    "ME": 12 * 3,
+    # 季度级; 10 Years
+    "Q": 4 * 10,
+    "QS": 4 * 10,
+    "QE": 4 * 10,
     # 年级
-    "Y": 50,
-    "YS": 50,
-    "YE": 50,
-    "A": 50,
+    "Y": 20,
+    "YS": 20,
+    "YE": 20,
+    "A": 20,
     # 默认值
-    "default": 50,
+    "default": 20,
 }
 
 
@@ -522,12 +522,22 @@ class PreprocessPipeline:
         - p ≤ 0.05: 拒绝 H0，存在显著自相关 → 不是白噪声 → 通过
         - p > 0.05: 无法拒绝 H0，可能是白噪声 → 失败（应删除）
 
+        Note:
+            acorr_ljungbox 在样本量超过 ~10000 时性能急剧下降（O(n²) 复杂度），
+            因此对于长序列，我们使用后 10000 个样本进行检验，这在统计上仍然有效。
+
         Returns:
             (is_not_white_noise, p_value)
         """
         try:
+            ts_clean = ts.dropna()
+            # 限制样本量以避免 acorr_ljungbox 的性能问题
+            # 10000 样本足以进行可靠的白噪声检验
+            max_samples = 10000
+            if len(ts_clean) > max_samples:
+                ts_clean = ts_clean.iloc[-max_samples:]
             # 使用多个 lag 进行检验，取最小 p 值（更严格）
-            result = acorr_ljungbox(ts.dropna(), lags=[10, 20], return_df=True)
+            result = acorr_ljungbox(ts_clean, lags=[10, 20], return_df=True)
             pval = result['lb_pvalue'].min()
             is_not_white_noise = pval <= 0.05
             return is_not_white_noise, round(pval, 4)
@@ -551,15 +561,24 @@ class PreprocessPipeline:
         - p ≤ 0.05: 拒绝 H0，序列平稳 → 不是随机游走 → (True, p)
         - p > 0.05: 无法拒绝 H0，可能是随机游走 → (False, p)
 
+        Note:
+            对于长序列，使用后 10000 个样本进行检验以提高效率，
+            这在统计上仍然有效且结果一致。
+
         Returns:
             (is_stationary, p_value): is_stationary=False 表示是随机游走
         """
         try:
+            ts_clean = ts.dropna()
+            # 限制样本量以提高效率
+            max_samples = 10000
+            if len(ts_clean) > max_samples:
+                ts_clean = ts_clean.iloc[-max_samples:]
             # regression='ct': 包含常数项和趋势项
             # 这样可以区分：
             # - 趋势平稳序列（有确定性趋势但平稳）→ p < 0.05
             # - 随机游走（有单位根）→ p > 0.05
-            result = adfuller(ts.dropna(), autolag="AIC", regression='ct')
+            result = adfuller(ts_clean, autolag="AIC", regression='ct')
             pval = result[1]
             is_stationary = pval <= 0.05
             return is_stationary, round(pval, 4)
@@ -1347,19 +1366,19 @@ def main():
     parser.add_argument(
         "--input_path",
         type=str,
-        default=None,
+        default='data/raw_csv/volicity/5T',
         help="输入路径：可以是单个 CSV 文件或包含多个 CSV 文件的文件夹"
     )
     parser.add_argument(
         "--dataset",
         type=str,
-        default=None,
+        default='current_velocity',
         help="数据集名称（用于输出文件命名）"
     )
     parser.add_argument(
         "--freq",
         type=str,
-        default=None,
+        default='5T',
         help="时间序列频率（如 'H', 'D', '15T' 等）。单文件模式可选（自动推断）；多文件模式建议指定"
     )
     parser.add_argument(
@@ -1556,6 +1575,9 @@ def main():
         series_lengths = []  # 每个series的长度
         total_observations = 0  # 所有series的observations总和
 
+        # 记录所有 variate 都建议删除的 series
+        fully_dropped_series = []  # 所有 variate 都建议删除的 series
+
         for csv_file in csv_files:
             csv_path = os.path.join(input_path, csv_file)
             csv_name = os.path.splitext(csv_file)[0]
@@ -1605,6 +1627,15 @@ def main():
                         variate_stats[col]["rw"] += 1
                     if col_result.get("has_spike_presence", False):
                         variate_stats[col]["sp"] += 1
+
+                # 检查该 series 是否所有 variate 都建议删除
+                all_variates = [col for col in result.keys()
+                                if not col.startswith("_") and col != "multivariate"]
+                if all_variates:  # 如果有 variate
+                    all_dropped = all(not result[col].get("predictable", False)
+                                      for col in all_variates)
+                    if all_dropped:
+                        fully_dropped_series.append(csv_file)
 
                 # 收集 correlation 统计（从完整相关矩阵）
                 if "multivariate" in result:
@@ -1797,10 +1828,18 @@ def main():
 
                     high_corr_pairs.append((pair, stats["high_count"], total_count, avg_high, avg_low, avg_all))
 
-            if dropped_variates or partially_dropped or high_corr_pairs:
+            if dropped_variates or partially_dropped or high_corr_pairs or fully_dropped_series:
                 print("\n" + "=" * 60)
                 print("⚠️  [决策提示] 需要人工决策!")
                 print("=" * 60)
+
+                if fully_dropped_series:
+                    print("\n📌 以下 series 的所有 variate 都建议删除，建议直接删除整个 series:")
+                    for series in fully_dropped_series:
+                        print(f"   - {series}")
+                    # 生成批量删除命令
+                    series_str = ",".join(sorted(fully_dropped_series))
+                    print(f"\n   批量删除命令: python -m timebench.preprocess --remove_series {series_str} --target_dir {csv_output_dir}")
 
                 if dropped_variates:
                     print("\n📌 以下 variate 在多数 series 上被丢弃，建议从整个数据集中移除该 variate:")
@@ -1836,10 +1875,14 @@ def main():
                         print(f"     移除 {pair[1]}: python -m timebench.preprocess --remove_variate {pair[1]} --target_dir {csv_output_dir}")
 
                 print("\n💡 提示:")
-                print("   - 如果某个 variate 在大多数 series 上都被丢弃 → 移除该 variate")
-                print("   - 如果某个 variate 仅在少数 series 上被丢弃 → 移除那些 series")
-                print("   - 如果两个变量高度相关 → 根据业务意义选择保留一个")
-                print("   - 支持逗号分隔的批量操作，如: --remove_variate VAR1,VAR2,VAR3")
+                if fully_dropped_series:
+                    print("   - 如果某个 series 的所有 variate 都建议删除 → 删除整个 series（删除后会自动更新 summary）")
+                if dropped_variates or partially_dropped:
+                    print("   - 如果某个 variate 在大多数 series 上都被丢弃 → 移除该 variate")
+                    print("   - 如果某个 variate 仅在少数 series 上被丢弃 → 移除那些 series")
+                if high_corr_pairs:
+                    print("   - 如果两个变量高度相关 → 根据业务意义选择保留一个")
+                print("   - 支持逗号分隔的批量操作，如: --remove_variate VAR1,VAR2,VAR3 或 --remove_series file1.csv,file2.csv")
                 print("   - 添加 --dry_run 可预览操作而不实际执行")
                 print("=" * 60)
 

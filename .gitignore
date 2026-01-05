@@ -96,3 +96,6 @@ leaderboard_app/
 datasets/
 output/
 data/
+classic_data/
+plot_analyze/
+debug.py

@@ -92,7 +92,7 @@ datasets:
     long:
       prediction_length: 672   # 1 week
 
-  solar_generation/H:
+  Australia_Solar/H:
     test_split: 0.1
     val_split: 0.1
     short:
@@ -103,8 +103,8 @@ datasets:
       prediction_length: 168
 
   epf_electricity_price/H:
-    test_split: 0.1
-    val_split: 0.1
+    test_split: 0.166667  # 1/6; the whole dataset is 6 years. Original paper used last 2 years for test. We use last 1 year for test.
+    val_split: 0.166667
     short:
       prediction_length: 24
     medium:
@@ -142,19 +142,9 @@ datasets:
     long:
       prediction_length: 168
 
-  AU_Occupancy/D:
-    test_split: 0.1
-    val_split: 0.1
-    short:
-      prediction_length: 3
-    medium:
-      prediction_length: 7
-    long:
-      prediction_length: 14
-  
     hospital/1D:
-      test_split: 0.1          
-      val_split: 0.1           
+      test_split: 0.1
+      val_split: 0.1
       short:
         prediction_length: 7
       medium:
@@ -163,28 +153,28 @@ datasets:
         prediction_length: 30
 
   CPHL/15T:
-      test_split: 0.1          
-      val_split: 0.1            
+      test_split: 0.1
+      val_split: 0.1
       short:
-        prediction_length: 16
-      medium:
-        prediction_length: 192
-      long:
-        prediction_length: 288
-      
-  CPHL/30T:
-      test_split: 0.1          
-      val_split: 0.1           
-      short:
-        prediction_length: 8
+        prediction_length: 24
       medium:
         prediction_length: 96
+      long:
+        prediction_length: 288
+
+  CPHL/30T:
+      test_split: 0.1
+      val_split: 0.1
+      short:
+        prediction_length: 12
+      medium:
+        prediction_length: 48
       long:
         prediction_length: 144
 
   Traffic/15T:
-      test_split: 0.1          
-      val_split: 0.1            
+      test_split: 0.1
+      val_split: 0.1
       short:
         prediction_length: 16
       medium:
@@ -192,17 +182,17 @@ datasets:
       long:
         prediction_length: 672
 
-  water_tem_and_salinty/5T:
-      test_split: 0.1          
-      val_split: 0.1           
+  Coastal_T_S/5T:
+      test_split: 0.1
+      val_split: 0.1
       short:
         prediction_length: 36
       medium:
         prediction_length: 288
       long:
         prediction_length: 864
-  
-  water_tem_and_salinty/15T:
+
+  Coastal_T_S/15T:
       test_split: 0.1
       val_split: 0.1
       short:
@@ -212,7 +202,7 @@ datasets:
       long:
         prediction_length: 288   # 对应 3天 (864 / 3)
 
-  water_tem_and_salinty/20T:
+  Coastal_T_S/20T:
       test_split: 0.1
       val_split: 0.1
       short:
@@ -222,7 +212,7 @@ datasets:
       long:
         prediction_length: 216   # 对应 3天 (72小时 * 3点/小时)
 
-  volicity/5T:
+  current_velocity/5T:
     test_split: 0.1
     val_split: 0.1
     short:
@@ -231,9 +221,9 @@ datasets:
       prediction_length: 288   # 对应 24小时 (24小时 * 12点/小时)
     long:
       prediction_length: 864   # 对应 3天 (72小时 * 12点/小时)
-  
-  volicity/10T:
-    test_split: 0.1
+
+  current_velocity/10T:
+    test_split: 0.2
     val_split: 0.1
     short:
       prediction_length: 18    # 对应 3小时 (3小时 * 6点/小时)
@@ -241,9 +231,9 @@ datasets:
       prediction_length: 144   # 对应 24小时 (24小时 * 6点/小时)
     long:
       prediction_length: 432   # 对应 3天 (72小时 * 6点/小时)
-  
-  volicity/15T:
-    test_split: 0.1
+
+  current_velocity/15T:
+    test_split: 0.2
     val_split: 0.1
     short:
       prediction_length: 12    # 对应 3小时 (3小时 * 4点/小时)
@@ -251,10 +241,10 @@ datasets:
       prediction_length: 96    # 对应 24小时 (24小时 * 4点/小时)
     long:
       prediction_length: 288   # 对应 3天 (72小时 * 4点/小时)
-  
 
-  volicity/20T:
-    test_split: 0.1
+
+  current_velocity/20T:
+    test_split: 0.2
     val_split: 0.1
     short:
       prediction_length: 9     # 对应 3小时 (3小时 * 3点/小时)
@@ -262,4 +252,14 @@ datasets:
       prediction_length: 72    # 对应 24小时 (24小时 * 3点/小时)
     long:
       prediction_length: 216   # 对应 3天 (72小时 * 3点/小时)
-      
+
+
+  current_velocity/H:
+    test_split: 0.2
+    val_split: 0.1
+    short:
+      prediction_length: 24     # 对应1天
+    medium:
+      prediction_length: 168    # 对应7天
+    long:
+      prediction_length: 336    # 对应14天
