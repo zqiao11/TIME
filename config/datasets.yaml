@@ -40,44 +40,44 @@ datasets:
       prediction_length: 14  # 14 days is the limit for weather forecasting; ceil(366/14) = 27 windows
 
   SG_PM25/H:
-    test_length: 8784     # 366 days
-    val_length: 8784
+    test_length: 2160  # 90 days
+    val_length: 2160
     short:
-      prediction_length: 24     # 24 hours = 1 day; 8784/24 = 366 windows
+      prediction_length: 24    # 1 day; 2160/24 = 90 windows
     medium:
-      prediction_length: 72  # 72 hours = 3 days; 8784/72 = 122 windows
+      prediction_length: 72    # 3 days; 2160/72 = 30 windows
     long:
-      prediction_length: 168  # 7 days; ceil(8784/168) = 53 windows
+      prediction_length: 168    # 7 days; ceil(2160/168) = 13 windows
 
   SG_Carpark/15T:
-    test_length: 1344  # 2 weeks
-    val_length: 1344
+    test_length: 672  # 1 week
+    val_length: 672
     short:
-      prediction_length: 16    # 4 hours; 1344/16 = 84 windows
+      prediction_length: 16    # 4 hours; 672/16 = 42 windows
     medium:
-      prediction_length: 96    # 1 day; 1344/96 = 14 windows
+      prediction_length: 96    # 1 day; 672/96 = 7 windows
     long:
-      prediction_length: 672   # 1 week; 1344/672 = 2 windows
+      prediction_length: 672   # 1 week; 672/672 = 1 window
 
   Australia_Solar/H:
-    test_length: 8784  # 366 days
-    val_length: 8784
+    test_length: 2160  # 90 days
+    val_length: 2160
     short:
-      prediction_length: 24    # 1 day; 8784/24 = 366 windows
+      prediction_length: 24    # 1 day; 2160/24 = 90 windows
     medium:
-      prediction_length: 72    # 3 days; 8784/72 = 122 windows
+      prediction_length: 72    # 3 days; 2160/72 = 30 windows
     long:
-      prediction_length: 168    # 7 days; ceil(8784/168) = 53 windows
+      prediction_length: 168    # 7 days; ceil(2160/168) = 13 windows
 
   epf_electricity_price/H:
-    test_length: 8784  # 366 days
-    val_length: 8784
+    test_length: 2160  # 90 days
+    val_length: 2160
     short:
-      prediction_length: 24    # 1 day; 8784/24 = 366 windows
+      prediction_length: 24    # 1 day; 2160/24 = 90 windows
     medium:
-      prediction_length: 72    # 3 days; 8784/72 = 122 windows
+      prediction_length: 72    # 3 days; 2160/72 = 30 windows
     long:
-      prediction_length: 168    # 7 days; ceil(8784/168) = 53 windows
+      prediction_length: 168    # 7 days; ceil(2160/168) = 13 windows
 
   OpenElectricity_NEM/5T:
     test_length: 2016  # 1 week
