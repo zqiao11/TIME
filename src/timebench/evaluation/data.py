@@ -4,6 +4,7 @@
 
 import math
 import os
+import warnings
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
@@ -23,10 +24,6 @@ from pandas.tseries.frequencies import to_offset
 from toolz import compose
 
 # --- Constants ---
-DEFAULT_TEST_SPLIT = 0.1
-DEFAULT_VAL_SPLIT = 0.1
-# MAX_WINDOW = 20
-
 # Default prediction length by frequency (used when no config provided)
 M4_PRED_LENGTH_MAP = {
     "A": 6, "Q": 8, "M": 18, "W": 13, "D": 14, "H": 48,
@@ -74,28 +71,22 @@ def get_dataset_settings(
     config: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Get prediction_length, test_split, and val_split for a specific dataset and term.
+    Get prediction_length, test_length, and val_length for a specific dataset and term.
 
-    Returns dict with keys: 'prediction_length', 'test_split', 'val_split'
-    Values are None if not configured (will use default calculation).
+    Returns dict with keys: 'prediction_length', 'test_length', 'val_length'
     """
     datasets_config = config.get("datasets", {})
-    defaults = config.get("defaults", {})
 
     if name in datasets_config:
         dataset_config = datasets_config[name]
         term_config = dataset_config.get(term, {})
         return {
             "prediction_length": term_config.get("prediction_length"),
-            "test_split": dataset_config.get("test_split", defaults.get("test_split")),
-            "val_split": dataset_config.get("val_split", defaults.get("val_split")),
+            "test_length": dataset_config.get("test_length"),
+            "val_length": dataset_config.get("val_length"),
         }
-
-    return {
-        "prediction_length": None,
-        "test_split": None,
-        "val_split": None,
-    }
+    else:
+        raise ValueError(f"Dataset '{name}' not found in configuration.")
 
 def itemize_start(data_entry: DataEntry) -> DataEntry:
     data_entry["start"] = data_entry["start"].item()
@@ -124,8 +115,8 @@ class Dataset:
         term: Term | str = Term.SHORT,
         to_univariate: bool = False,
         prediction_length: Optional[int] = None,
-        test_split: Optional[float] = None,
-        val_split: Optional[float] = None,
+        test_length: int = None,
+        val_length: int = None,
         storage_env_var: str = "GIFT_EVAL",
     ):
         """
@@ -141,12 +132,12 @@ class Dataset:
             Convert multivariate to univariate
         prediction_length : int, optional
             Prediction length. If None, use default calculation based on freq and term.
-        test_split : float, optional
-            Test set ratio (0~1). If None, use default (0.1).
-            Windows is auto-calculated: ceil(test_split * min_series_length / prediction_length)
-        val_split : float, optional
-            Validation set ratio (0~1). If None, use default (0.1).
-            Val windows is auto-calculated: ceil(val_split * min_series_length / prediction_length)
+        test_length : int
+            Length of test set (in time steps). Required parameter.
+            Windows is auto-calculated: ceil(test_length / prediction_length)
+        val_length : int
+            Length of validation set (in time steps). Required parameter.
+            Val windows is auto-calculated: ceil(val_length / prediction_length)
         storage_env_var : str
             Environment variable name for dataset storage path.
         """
@@ -166,8 +157,8 @@ class Dataset:
         self.term = Term(term) if isinstance(term, str) else term
         self.name = name
         self._custom_prediction_length = prediction_length
-        self._test_split = test_split if test_split is not None else DEFAULT_TEST_SPLIT
-        self._val_split = val_split if val_split is not None else DEFAULT_VAL_SPLIT
+        self._test_length = test_length
+        self._val_length = val_length
 
         process = ProcessDataEntry(
             self.freq,
@@ -253,25 +244,44 @@ class Dataset:
         """
         return self._variate_names
 
-    @cached_property
-    def test_split(self) -> float:
-        """Get test split ratio."""
-        return self._test_split
+    def _validate_lengths(self):
+        """Validate test_length and val_length against min_series_length."""
+        min_len = self._min_series_length
 
-    @cached_property
-    def val_split(self) -> float:
-        """Get validation split ratio."""
-        return self._val_split
+        # Check test_length
+        if self._test_length > min_len:
+            raise ValueError(
+                f"test_length ({self._test_length}) exceeds min_series_length ({min_len}). "
+                f"Please reduce test_length."
+            )
+        if self._test_length > 0.5 * min_len:
+            warnings.warn(
+                f"test_length ({self._test_length}) exceeds 50% of min_series_length ({min_len}). "
+                f"This may leave insufficient data for training.",
+                UserWarning
+            )
+
+        # Check val_length
+        if self._val_length > min_len:
+            raise ValueError(
+                f"val_length ({self._val_length}) exceeds min_series_length ({min_len}). "
+                f"Please reduce val_length."
+            )
+        if self._val_length > 0.5 * min_len:
+            warnings.warn(
+                f"val_length ({self._val_length}) exceeds 50% of min_series_length ({min_len}). "
+                f"This may leave insufficient data for training.",
+                UserWarning
+            )
 
     @cached_property
     def windows(self) -> int:
         """
         Get number of test windows.
-        Auto-calculated: ceil(test_split * min_series_length / prediction_length)
+        Auto-calculated: ceil(test_length / prediction_length)
         """
-        if "m4" in self.name:
-            return 1
-        w = math.ceil(self._test_split * self._min_series_length / self.prediction_length)
+        self._validate_lengths()
+        w = math.ceil(self._test_length / self.prediction_length)
         # return min(max(1, w), MAX_WINDOW)
         return max(1, w)
 
@@ -279,11 +289,10 @@ class Dataset:
     def val_windows(self) -> int:
         """
         Get number of validation windows.
-        Auto-calculated: ceil(val_split * min_series_length / prediction_length)
+        Auto-calculated: ceil(val_length / prediction_length)
         """
-        if "m4" in self.name:
-            return 1
-        w = math.ceil(self._val_split * self._min_series_length / self.prediction_length)
+        self._validate_lengths()
+        w = math.ceil(self._val_length / self.prediction_length)
         # return min(max(1, w), MAX_WINDOW)
         return max(1, w)
 
