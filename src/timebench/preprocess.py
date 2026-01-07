@@ -216,6 +216,81 @@ class PreprocessPipeline:
 
         return cleaned_df, results
 
+    def _compute_cross_series_correlation(
+        self,
+        series_data: dict[str, pd.DataFrame],
+        corr_thresh: float
+    ) -> dict:
+        """
+        计算不同series（CSV文件）之间的相关性
+        适用于UTS数据集：每个CSV是单变量时间序列
+
+        要求：所有UTS的长度必须相同才能计算相关性
+
+        Args:
+            series_data: {csv_file_name: cleaned_df} 字典
+            corr_thresh: 相关性阈值
+
+        Returns:
+            dict: 包含相关性矩阵和高相关对的信息（如果所有series都是UTS且长度相同）
+        """
+        if len(series_data) < 2:
+            return {}
+
+        # 检查是否所有series都是单变量的
+        all_uts = True
+        uts_dict = {}  # {csv_file: series}
+
+        for csv_file, df in series_data.items():
+            # 如果timestamp是索引，重置为列
+            if df.index.name == 'timestamp' or isinstance(df.index, pd.DatetimeIndex):
+                df = df.reset_index()
+
+            # 确保timestamp列存在
+            if 'timestamp' not in df.columns:
+                continue
+
+            # 获取唯一的变量列（排除timestamp）
+            data_cols = [c for c in df.columns if c != 'timestamp']
+            if len(data_cols) != 1:
+                all_uts = False
+                break
+
+            var_col = data_cols[0]
+            ts = df[var_col].values  # 只取数值，不关心时间戳
+            uts_dict[csv_file] = ts
+
+        if not all_uts or len(uts_dict) < 2:
+            return {}
+
+        # 检查所有UTS的长度是否相同
+        lengths = [len(ts) for ts in uts_dict.values()]
+        if len(set(lengths)) != 1:
+            # 长度不一致，无法计算相关性
+            return {}
+
+        # 构建DataFrame用于计算相关性
+        all_ts = pd.DataFrame(uts_dict)
+
+        # 计算相关性矩阵
+        corr_matrix = all_ts.corr(method='pearson')
+
+        # 找出高度相关的UTS对
+        corr_duplicates = []
+        for i in range(len(corr_matrix)):
+            for j in range(i + 1, len(corr_matrix)):
+                corr_val = corr_matrix.iloc[i, j]
+                if not np.isnan(corr_val) and abs(corr_val) > corr_thresh:
+                    series1 = corr_matrix.index[i]
+                    series2 = corr_matrix.columns[j]
+                    corr_duplicates.append((series1, series2, round(corr_val, 4)))
+
+        return {
+            "correlation_matrix": corr_matrix.to_dict(),
+            "correlation_duplicates": corr_duplicates,
+            "num_series": len(uts_dict),
+            "series_length": lengths[0] if lengths else 0
+        }
 
     def _run_univariate(self, ts: pd.Series) -> dict:
         """
@@ -255,9 +330,18 @@ class PreprocessPipeline:
         if not passed:
             results["predictable"] = False
 
+        # 先检查并补全缺失的时间戳（补全后值为 NaN）
+        ts, ts_passed, ts_info = self._check_timestamp(ts)
+        results["checks"].append(
+            f"Timestamp stability {'✅ Passed' if ts_passed else '❌ Failed'} ({ts_info})"
+        )
+        if not ts_passed:
+            results["predictable"] = False
+
+        # 再检查缺失率（包括原始缺失和补全时间戳产生的缺失）
         passed, val = self._check_missing(ts)
         results["checks"].append(
-            f"Missing rate {'✅ Passed' if passed else '❌ Failed'} missing_rate={val:.2f}%)"
+            f"Missing rate {'✅ Passed' if passed else '❌ Failed'} (missing_rate={val:.2f}%)"
         )
         if not passed:
             results["predictable"] = False
@@ -268,13 +352,6 @@ class PreprocessPipeline:
         # 为了进行需要完整数据的check（如异常值检测），临时填充NaN
         # 但最终保存时会保留原始NaN值
         ts_for_checks = ts.ffill().bfill().fillna(0)
-
-        passed, val = self._check_timestamp(ts_for_checks)
-        results["checks"].append(
-            f"Timestamp stability {'✅ Passed' if passed else '❌ Failed'} (monotonic={val})"
-        )
-        if not passed:
-            results["predictable"] = False
 
         if not results["predictable"]:
             return results
@@ -492,9 +569,41 @@ class PreprocessPipeline:
         missing_rate = ts.isna().mean()
         return missing_rate <= self.missing_rate_thresh, missing_rate * 100
 
-    def _check_timestamp(self, ts):
-        ok = isinstance(ts.index, pd.DatetimeIndex) and ts.index.is_monotonic_increasing
-        return ok, ok
+    def _check_timestamp(self, ts: pd.Series) -> tuple[pd.Series, bool, str]:
+        """
+        检查时间戳的完整性，并补全缺失的时间戳（值设为 NaN）
+
+        Returns:
+            tuple: (补全后的序列, 是否通过检查, 检查信息)
+        """
+        # 检查是否为 DatetimeIndex
+        if not isinstance(ts.index, pd.DatetimeIndex):
+            return ts, False, "not_datetime_index"
+
+        # 检查是否单调递增
+        if not ts.index.is_monotonic_increasing:
+            return ts, False, "not_monotonic"
+
+        # 使用 inferred_freq 补全缺失的时间戳
+        if self.inferred_freq is not None and len(ts) > 1:
+            # 创建完整的时间范围
+            full_range = pd.date_range(
+                start=ts.index.min(),
+                end=ts.index.max(),
+                freq=self.inferred_freq
+            )
+
+            # 检查是否有缺失的时间戳
+            missing_count = len(full_range) - len(ts)
+
+            if missing_count > 0:
+                # 使用 reindex 补全缺失的时间戳，缺失值自动设为 NaN
+                ts = ts.reindex(full_range)
+                ts.index.name = 'timestamp'
+                print(f"[PreprocessPipeline] 补全了 {missing_count} 个缺失的时间戳")
+                return ts, True, f"filled_{missing_count}_missing_timestamps"
+
+        return ts, True, "ok"
 
     def _check_constant(self, ts):
         topk = 5
@@ -1578,6 +1687,9 @@ def main():
         # 记录所有 variate 都建议删除的 series
         fully_dropped_series = []  # 所有 variate 都建议删除的 series
 
+        # 用于存储所有成功处理的series数据（用于跨series相关性检查）
+        successful_series_data = {}  # {csv_file: cleaned_df}
+
         for csv_file in csv_files:
             csv_path = os.path.join(input_path, csv_file)
             csv_name = os.path.splitext(csv_file)[0]
@@ -1599,6 +1711,9 @@ def main():
                 success_count += 1
                 total_rows += len(cleaned_df)
                 total_cols += len(cleaned_df.columns)
+
+                # 保存cleaned_df用于跨series相关性检查
+                successful_series_data[csv_file] = cleaned_df.copy()
 
                 # 收集数据集级别的统计信息
                 series_length = len(cleaned_df)
@@ -1689,6 +1804,35 @@ def main():
             else:
                 fail_count += 1
 
+        # === 跨series相关性检查（适用于UTS数据集）===
+        cross_series_corr = {}
+        if successful_series_data:
+            pipeline = PreprocessPipeline(
+                freq=inferred_freq,
+                missing_rate_thresh=args.missing_rate_thresh,
+                corr_thresh=0.95  # 使用默认阈值
+            )
+            cross_series_corr = pipeline._compute_cross_series_correlation(
+                successful_series_data,
+                corr_thresh=0.95
+            )
+
+            if cross_series_corr:
+                print("\n" + "=" * 60)
+                print(f"[PreprocessPipeline] 跨Series相关性检查 (UTS数据集)")
+                print("=" * 60)
+                print(f"检测到 {cross_series_corr['num_series']} 个UTS series")
+                print(f"Series长度: {cross_series_corr['series_length']}")
+
+                if cross_series_corr['correlation_duplicates']:
+                    print(f"\n⚠️  发现 {len(cross_series_corr['correlation_duplicates'])} 对高度相关的UTS:")
+                    for series1, series2, corr_val in cross_series_corr['correlation_duplicates']:
+                        print(f"   - {series1} <-> {series2}: r = {corr_val}")
+                    print("\n💡 建议: 考虑移除其中一个高度相关的series以减少冗余")
+                else:
+                    print("✅ 未发现高度相关的UTS对")
+                print("=" * 60)
+
         # 打印汇总信息
         print("\n" + "=" * 60)
         print("[PreprocessPipeline] 批量处理完成!")
@@ -1755,6 +1899,15 @@ def main():
                 }
 
             # 注意：不再保存 correlation_duplicates 字段，但保留计算用于打印
+
+            # 添加跨series相关性信息（仅保存correlation_matrix，不保存correlation_duplicates）
+            if cross_series_corr:
+                cross_series_info = {
+                    "num_series": cross_series_corr["num_series"],
+                    "series_length": cross_series_corr["series_length"],
+                    "correlation_matrix": cross_series_corr["correlation_matrix"]
+                }
+                variate_summary["cross_series_correlation"] = cross_series_info
 
             summary_json_path = os.path.join(json_output_dir, "_summary.json")
             with open(summary_json_path, "w", encoding="utf-8") as f:
@@ -1828,7 +1981,13 @@ def main():
 
                     high_corr_pairs.append((pair, stats["high_count"], total_count, avg_high, avg_low, avg_all))
 
-            if dropped_variates or partially_dropped or high_corr_pairs or fully_dropped_series:
+            # 检查跨series相关性（UTS数据集）
+            cross_series_high_corr = []
+            if cross_series_corr and cross_series_corr.get("correlation_duplicates"):
+                for series1, series2, corr_val in cross_series_corr["correlation_duplicates"]:
+                    cross_series_high_corr.append((series1, series2, corr_val))
+
+            if dropped_variates or partially_dropped or high_corr_pairs or fully_dropped_series or cross_series_high_corr:
                 print("\n" + "=" * 60)
                 print("⚠️  [决策提示] 需要人工决策!")
                 print("=" * 60)
@@ -1874,6 +2033,13 @@ def main():
                         print(f"     移除 {pair[0]}: python -m timebench.preprocess --remove_variate {pair[0]} --target_dir {csv_output_dir}")
                         print(f"     移除 {pair[1]}: python -m timebench.preprocess --remove_variate {pair[1]} --target_dir {csv_output_dir}")
 
+                if cross_series_high_corr:
+                    print("\n📌 以下UTS series之间高度相关（跨series相关性），考虑移除其中一个:")
+                    for series1, series2, corr_val in cross_series_high_corr:
+                        print(f"   - {series1} <-> {series2}: r = {corr_val}")
+                        print(f"     移除 {series1}: python -m timebench.preprocess --remove_series {series1} --target_dir {csv_output_dir}")
+                        print(f"     移除 {series2}: python -m timebench.preprocess --remove_series {series2} --target_dir {csv_output_dir}")
+
                 print("\n💡 提示:")
                 if fully_dropped_series:
                     print("   - 如果某个 series 的所有 variate 都建议删除 → 删除整个 series（删除后会自动更新 summary）")
@@ -1882,6 +2048,8 @@ def main():
                     print("   - 如果某个 variate 仅在少数 series 上被丢弃 → 移除那些 series")
                 if high_corr_pairs:
                     print("   - 如果两个变量高度相关 → 根据业务意义选择保留一个")
+                if cross_series_high_corr:
+                    print("   - 如果两个UTS series高度相关 → 根据业务意义选择保留一个")
                 print("   - 支持逗号分隔的批量操作，如: --remove_variate VAR1,VAR2,VAR3 或 --remove_series file1.csv,file2.csv")
                 print("   - 添加 --dry_run 可预览操作而不实际执行")
                 print("=" * 60)
