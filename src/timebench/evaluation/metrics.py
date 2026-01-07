@@ -11,6 +11,41 @@ Supported metrics:
 - MASE: Mean Absolute Scaled Error (using median forecast)
 - ND: Normalized Deviation (using median forecast)
 - CRPS: Continuous Ranked Probability Score (MeanWeightedSumQuantileLoss)
+
+================================================================================
+聚合逻辑概述 (Aggregation Logic Summary):
+================================================================================
+
+本文件实现 **第一层聚合: pred_len → window 级别**
+
+输入形状:
+    predictions_samples: (num_series, num_windows, num_samples, num_variates, pred_len)
+    ground_truth:        (num_series, num_windows, num_variates, pred_len)
+
+输出形状:
+    每个指标数组:        (num_series, num_windows, num_variates)
+
+聚合方式 (对 pred_len 维度):
+- 单个 timestep 级别的平均值
+    - MSE:   np.mean(error ** 2)                    # 均值
+    - MAE:   np.mean(abs_error)                     # 均值
+    - RMSE:  sqrt(MSE)
+    - MAPE:  np.nanmean(abs_error / abs_gt)         # 均值，忽略 NaN
+    - sMAPE: np.nanmean(2*|e|/(|gt|+|pred|))        # 均值，忽略 NaN
+    - MASE:  MAE / seasonal_error                   # MAE 除以季节性误差
+- 整个窗口级别的归一化值；尺度不受windows长度影响
+    - ND:    sum(abs_error) / sum(abs_gt)           # 和比值
+    - CRPS:  mean(sum(q_loss) / sum(abs_gt))        # 分位点损失的加权平均
+
+注意: 代码使用 valid_mask 过滤 ground_truth 中的 NaN 值（防御性编程）
+      正常情况下 ground_truth 不应有 NaN padding
+
+--------------------------------------------------------------------------------
+第二层聚合: window 级别 → 数据集级别 (在 saver.py 中实现)
+--------------------------------------------------------------------------------
+    使用 np.nanmean(metric_values) 将 3D 数组平均成标量:
+    所有 series × 所有 windows × 所有 variates → 简单平均，忽略 NaN
+================================================================================
 """
 
 import numpy as np
@@ -21,7 +56,6 @@ DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
 
 def compute_per_window_metrics(
-    predictions_mean: np.ndarray,
     predictions_samples: np.ndarray,
     ground_truth: np.ndarray,
     context: np.ndarray,
@@ -33,9 +67,6 @@ def compute_per_window_metrics(
     All metrics are aligned with GluonTS implementation.
 
     Args:
-        predictions_mean: Mean predictions with shape
-            (num_series, num_windows, num_variates, pred_len)
-            Note: This is not used for most metrics; median from samples is used instead.
         predictions_samples: Sampled predictions with shape
             (num_series, num_windows, num_samples, num_variates, pred_len)
         ground_truth: Ground truth values with shape
@@ -54,7 +85,7 @@ def compute_per_window_metrics(
     if quantile_levels is None:
         quantile_levels = DEFAULT_QUANTILE_LEVELS
 
-    num_series, num_windows, num_variates, pred_len = predictions_mean.shape
+    num_series, num_windows, num_samples, num_variates, pred_len = predictions_samples.shape
 
     # Initialize metric arrays: (num_series, num_windows, num_variates)
     mse = np.zeros((num_series, num_windows, num_variates))
@@ -78,6 +109,21 @@ def compute_per_window_metrics(
 
                 # Compute median (0.5 quantile) forecast - used for most metrics
                 median_pred = np.median(samples, axis=0)  # (pred_len,)
+
+                # Create valid mask to handle potential NaN padding in ground truth
+                # (defensive programming - normally gt should not have NaN)
+                valid_mask = ~np.isnan(gt)
+                if not np.any(valid_mask):
+                    # No valid timesteps - set all metrics to NaN
+                    mse[s, w, v] = mae[s, w, v] = rmse[s, w, v] = np.nan
+                    mape[s, w, v] = smape[s, w, v] = mase[s, w, v] = np.nan
+                    nd[s, w, v] = crps[s, w, v] = np.nan
+                    continue
+
+                # Filter to valid timesteps only
+                gt = gt[valid_mask]
+                median_pred = median_pred[valid_mask]
+                samples = samples[:, valid_mask]  # (num_samples, valid_len)
 
                 # Compute error using median forecast
                 error = gt - median_pred
@@ -136,7 +182,7 @@ def compute_per_window_metrics(
                 if abs_label_sum > 0:
                     weighted_quantile_losses = []
                     for q in quantile_levels:
-                        q_pred = np.quantile(samples, q, axis=0)  # (pred_len,)
+                        q_pred = np.quantile(samples, q, axis=0)  # (valid_len,)
                         q_error = gt - q_pred
                         # GluonTS quantile_loss formula: 2 * |error * ((pred >= label) - q)|
                         indicator = (q_pred >= gt).astype(float)

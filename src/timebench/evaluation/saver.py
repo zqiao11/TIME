@@ -86,7 +86,6 @@ def save_window_predictions(
     # Initialize arrays
     num_samples = 100  # Fixed to 100 for all models
 
-    predictions_mean = np.zeros((num_series, num_windows, num_variates, prediction_length))
     predictions_samples = np.zeros((num_series, num_windows, num_samples, num_variates, prediction_length))
     ground_truth = np.zeros((num_series, num_windows, num_variates, prediction_length))
 
@@ -103,15 +102,9 @@ def save_window_predictions(
         window_idx = idx % num_windows
 
         # Get forecast mean and samples
-        fc_mean = fc.mean
         fc_samples = fc.samples
 
         # Handle univariate case (add dimension if needed)
-        if fc_mean.ndim == 1:
-            fc_mean = fc_mean[np.newaxis, :]
-        elif fc_mean.shape[0] == prediction_length and fc_mean.shape[1] == num_variates:
-            fc_mean = fc_mean.T
-
         if fc_samples.ndim == 2:
             fc_samples = fc_samples[:, np.newaxis, :]
         elif fc_samples.shape[1] == prediction_length and fc_samples.shape[2] == num_variates:
@@ -127,7 +120,6 @@ def save_window_predictions(
         elif ctx.shape[0] != num_variates:
             ctx = ctx.T
 
-        predictions_mean[series_idx, window_idx] = fc_mean
         predictions_samples[series_idx, window_idx] = fc_samples
         ground_truth[series_idx, window_idx] = gt
 
@@ -136,18 +128,17 @@ def save_window_predictions(
         context_array[series_idx, window_idx, :, :ctx_len] = ctx
 
     # Save predictions to npz file (only predictions, no ground_truth or context)
+    # Use float16 to reduce storage (sufficient for visualization purposes)
     npz_path = os.path.join(ds_output_dir, "predictions.npz")
     np.savez_compressed(
         npz_path,
-        predictions_mean=predictions_mean,
-        predictions_samples=predictions_samples,
+        predictions_samples=predictions_samples.astype(np.float16),
     )
     print(f"    Saved predictions to {npz_path}")
 
     # Compute per-window metrics
     print("    Computing per-window metrics...")
     metrics = compute_per_window_metrics(
-        predictions_mean=predictions_mean,
         predictions_samples=predictions_samples,
         ground_truth=ground_truth,
         context=context_array,
