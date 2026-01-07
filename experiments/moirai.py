@@ -5,6 +5,8 @@ Usage:
     python experiments/moirai.py
     python experiments/moirai.py --model-size base
     python experiments/moirai.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
+    python experiments/moirai.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/moirai.py --dataset all_datasets  # Run all datasets from config
     python experiments/moirai.py --val  # Evaluate on validation data (no saving)
 """
 
@@ -87,10 +89,10 @@ def run_moirai_experiment(
         # Get settings from config
         settings = get_dataset_settings(dataset_name, term, config)
         prediction_length = settings.get("prediction_length")
-        test_split = settings.get("test_split")
-        val_split = settings.get("val_split")
+        test_length = settings.get("test_length")
+        val_length = settings.get("val_length")
 
-        print(f"  Config: prediction_length={prediction_length}, test_split={test_split}, val_split={val_split}")
+        print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
         # Moirai hyperparameter (constant across all terms)
         patch_size = 32
@@ -114,22 +116,20 @@ def run_moirai_experiment(
             term=term,
             to_univariate=False,
             prediction_length=prediction_length,
-            test_split=test_split,
-            val_split=val_split,
+            test_length=test_length,
+            val_length=val_length,
         )
 
         # Calculate actual test/val length (based on min series length)
         if use_val:
-            data_length = int(dataset.val_split * dataset._min_series_length)
+            data_length = val_length
             num_windows = dataset.val_windows
             split_name = "Val split"
-            split_value = dataset.val_split
             eval_data = dataset.val_data
         else:
-            data_length = int(dataset.test_split * dataset._min_series_length)
+            data_length = test_length
             num_windows = dataset.windows
             split_name = "Test split"
-            split_value = dataset.test_split
             eval_data = dataset.test_data
 
         print("  Dataset info:")
@@ -137,7 +137,7 @@ def run_moirai_experiment(
         print(f"    - Num series: {len(dataset.hf_dataset)}")
         print(f"    - Target dim: {dataset.target_dim}")
         print(f"    - Series length: min={dataset._min_series_length}, max={dataset._max_series_length}, avg={dataset._avg_series_length:.1f}")
-        print(f"    - {split_name}: {split_value} ({data_length} steps)")
+        print(f"    - {split_name}: {data_length} steps)")
         print(f"    - Prediction length: {dataset.prediction_length}")
         print(f"    - Windows: {num_windows}")
 
@@ -219,22 +219,6 @@ def run_moirai_experiment(
             ctx_len = ctx.shape[-1]
             context_array[series_idx, window_idx, :, :ctx_len] = ctx
 
-        # Compute metrics
-        print("    Computing metrics...")
-        metrics = compute_per_window_metrics(
-            predictions_mean=predictions_mean,
-            predictions_samples=predictions_samples,
-            ground_truth=ground_truth,
-            context=context_array,
-            seasonality=season_length,
-        )
-
-        # Print metrics summary
-        print("    Metrics summary (averaged over all series/windows/variates):")
-        for metric_name, metric_values in metrics.items():
-            mean_val = np.nanmean(metric_values)
-            print(f"      {metric_name}: {mean_val:.4f}")
-
         if use_val:
             print("    (No results saved - validation data used for hyperparameter selection)")
         else:
@@ -267,8 +251,8 @@ def run_moirai_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Moirai experiments")
-    parser.add_argument("--dataset", type=str, default="IMOS/15T",
-                        help="Dataset name")
+    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
+                        help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets' to run all datasets from config")
     parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
                         choices=["short", "medium", "long"],
                         help="Terms to evaluate")
@@ -292,18 +276,48 @@ def main():
 
     args = parser.parse_args()
 
-    run_moirai_experiment(
-        dataset_name=args.dataset,
-        terms=args.terms,
-        model_size=args.model_size,
-        output_dir=args.output_dir,
-        batch_size=args.batch_size,
-        num_samples=args.num_samples,
-        context_length=args.context_length,
-        cuda_device=args.cuda_device,
-        config_path=Path(args.config) if args.config else None,
-        use_val=args.val,
-    )
+    # Handle dataset list or 'all_datasets'
+    config_path = Path(args.config) if args.config else None
+
+    if len(args.dataset) == 1 and args.dataset[0] == "all_datasets":
+        # Load all datasets from config
+        config = load_dataset_config(config_path)
+        datasets = list(config.get("datasets", {}).keys())
+        print(f"Running all {len(datasets)} datasets from config:")
+        for ds in datasets:
+            print(f"  - {ds}")
+    else:
+        datasets = args.dataset
+
+    # Iterate over all datasets
+    total_datasets = len(datasets)
+    for idx, dataset_name in enumerate(datasets, 1):
+        print(f"\n{'#'*60}")
+        print(f"# Dataset {idx}/{total_datasets}: {dataset_name}")
+        print(f"{'#'*60}")
+
+        try:
+            run_moirai_experiment(
+                dataset_name=dataset_name,
+                terms=args.terms,
+                model_size=args.model_size,
+                output_dir=args.output_dir,
+                batch_size=args.batch_size,
+                num_samples=args.num_samples,
+                context_length=args.context_length,
+                cuda_device=args.cuda_device,
+                config_path=config_path,
+                use_val=args.val,
+            )
+        except Exception as e:
+            print(f"ERROR: Failed to run experiment for {dataset_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+
+    print(f"\n{'#'*60}")
+    print(f"# All {total_datasets} dataset(s) completed!")
+    print(f"{'#'*60}")
 
 
 if __name__ == "__main__":

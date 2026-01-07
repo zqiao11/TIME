@@ -19,6 +19,7 @@
 # =============================================================================
 
 datasets:
+########################### Nature ###########################
   Water_Quality_Darwin/15T:
     test_length: 1440  # 15 days
     val_length: 1440
@@ -29,36 +30,139 @@ datasets:
     long:
       prediction_length: 288   # 3 days; 1440/288 = 5 windows
 
-  SG_Weather/D:
-    test_length: 366
-    val_length: 366
+  current_velocity/5T:
+    test_length: 4320  # 15 days
+    val_length: 4320
     short:
-      prediction_length: 3  # 3 days; 366/3 = 122 windows
+      prediction_length: 36    # 3 hours; 4320/36 = 120 windows
     medium:
-      prediction_length: 7  # 7 days; ceil(366/7) = 53 windows
+      prediction_length: 288   # 24 hours; 4320/288 = 15 windows
     long:
-      prediction_length: 14  # 14 days is the limit for weather forecasting; ceil(366/14) = 27 windows
+      prediction_length: 864   # 3 days; 4320/864 = 5 windows
 
-  SG_PM25/H:
-    test_length: 2160  # 90 days
+  current_velocity/10T:
+    test_length: 2160  # 15 days
     val_length: 2160
     short:
-      prediction_length: 24    # 1 day; 2160/24 = 90 windows
+      prediction_length: 18    # 3 hours; 2160/18 = 120 windows
     medium:
-      prediction_length: 72    # 3 days; 2160/72 = 30 windows
+      prediction_length: 144   # 24 hours; 2160/144 = 15 windows
     long:
-      prediction_length: 168    # 7 days; ceil(2160/168) = 13 windows
+      prediction_length: 432   # 3 days; 2160/432 = 5 windows
 
-  SG_Carpark/15T:
-    test_length: 672  # 1 week
+  current_velocity/15T:
+    test_length: 1440  # 15 days
+    val_length: 1440
+    short:
+      prediction_length: 12    # 3 hours; 1440/12 = 120 windows
+    medium:
+      prediction_length: 96    # 24 hours; 1440/96 = 15 windows
+    long:
+      prediction_length: 288   # 3 days; 1440/288 = 5 windows
+
+
+  current_velocity/20T:
+    test_length: 1080  # 15 days
+    val_length: 1080
+    short:
+      prediction_length: 9     # 3 hours; 1080/9 = 120 windows
+    medium:
+      prediction_length: 72    # 24 hours; 1080/72 = 15 windows
+    long:
+      prediction_length: 216   # 3 days; 1080/216 = 5 windows
+
+
+  current_velocity/H:
+    test_length: 672
     val_length: 672
     short:
-      prediction_length: 16    # 4 hours; 672/16 = 42 windows
+      prediction_length: 24     # 1 day; 672/24 = 28 windows
     medium:
-      prediction_length: 96    # 1 day; 672/96 = 7 windows
+      prediction_length: 168    # 7 days; 672/168 = 4 windows
     long:
-      prediction_length: 672   # 1 week; 672/672 = 1 window
+      prediction_length: 336    # 14 days; 672/336 = 2 windows
 
+  CPHL/15T:
+      test_length: 1440  # 15 days
+      val_length: 1440
+      short:
+        prediction_length: 12    # 3 hours; 1440/12 = 120 windows
+      medium:
+        prediction_length: 96    # 24 hours; 1440/96 = 15 windows
+      long:
+        prediction_length: 288   # 3 days; 1440/288 = 5 windows
+
+  CPHL/30T:
+      test_length: 1440  # 30 days
+      val_length: 1440
+      short:
+        prediction_length: 12    # 3 hours; 1440/12 = 120 windows
+      medium:
+        prediction_length: 48    # 24 hours; 1440/48 = 30 windows
+      long:
+        prediction_length: 144   # 3 days; 1440/144 = 10 windows
+
+  Coastal_T_S/5T:
+      test_length: 4320  # 15 days
+      val_length: 4320
+      short:
+        prediction_length: 36    # 3 hours; 4320/36 = 120 windows
+      medium:
+        prediction_length: 288   # 24 hours; 4320/288 = 15 windows
+      long:
+        prediction_length: 864   # 3 days; 4320/864 = 5 windows
+
+  Coastal_T_S/15T:
+      test_length: 1440  # 15 days
+      val_length: 1440
+      short:
+        prediction_length: 12    # 3 hours; 1440/12 = 120 windows
+      medium:
+        prediction_length: 96    # 24 hours; 1440/96 = 15 windows
+      long:
+        prediction_length: 288   # 3 days; 1440/288 = 5 windows
+
+  Coastal_T_S/20T:
+      test_length: 1080  # 15 days
+      val_length: 1080
+      short:
+        prediction_length: 9     # 3 hours; 1080/9 = 120 windows
+      medium:
+        prediction_length: 72    # 24 hours; 1080/72 = 15 windows
+      long:
+        prediction_length: 216   # 3 days; 1080/216 = 5 windows
+
+  SG_Weather/D:
+    test_length: 365
+    val_length: 365
+    short:
+      prediction_length: 3  # 3 days; ceil(365/3) = 122 windows
+    medium:
+      prediction_length: 7  # 7 days; ceil(365/7) = 53 windows
+    long:
+      prediction_length: 14  # 14 days is the limit for weather forecasting; ceil(365/14) = 27 windows
+
+  SG_PM25/H:
+    test_length: 2208  # 3 months, 92 days; 2025.03.01 - 2025.05.31
+    val_length: 2160  # 3 months, 90 days; 2025.01.01 - 2025.03.31
+    short:
+      prediction_length: 24    # 1 day; 2208/24 = 92 windows
+    medium:
+      prediction_length: 72    # 3 days; floor(2208/72) = 30 windows
+    long:
+      prediction_length: 168    # 7 days; floor(2208/168) = 13 windows
+
+  NE_China_Wind/H:
+    test_length: 720  # 30 days
+    val_length: 720
+    short:
+      prediction_length: 24    # 1 day; 720/24 = 30 windows
+    medium:
+      prediction_length: 72    # 3 days; 720/72 = 10 windows
+    long:
+      prediction_length: 168    # 7 days; ceil(720/168) = 5 windows
+
+  ########################### Energy ###########################
   Australia_Solar/H:
     test_length: 2160  # 90 days
     val_length: 2160
@@ -99,134 +203,36 @@ datasets:
     long:
       prediction_length: 672   # 384 * 15min = 3 days; 1344/672 = 2 windows
 
-  NE_China_Wind/H:
-    test_length: 720  # 30 days
-    val_length: 720
-    short:
-      prediction_length: 24    # 1 day; 720/24 = 30 windows
-    medium:
-      prediction_length: 72    # 3 days; 720/72 = 10 windows
-    long:
-      prediction_length: 168    # 7 days; ceil(720/168) = 5 windows
 
+########################### Transportation ###########################
+  SG_Carpark/15T:
+    test_length: 672  # 1 week
+    val_length: 672
+    short:
+      prediction_length: 16    # 4 hours; 672/16 = 42 windows
+    medium:
+      prediction_length: 96    # 1 day; 672/96 = 7 windows
+    long:
+      prediction_length: 672   # 1 week; 672/672 = 1 window
+
+  Finland_Traffic/15T:
+      test_length: 2976  # 31 days
+      val_length: 2976
+      short:
+        prediction_length: 16    # 4 hours; 2976/16 = 186 windows
+      medium:
+        prediction_length: 96    # 1 day; 2976/96 = 31 windows
+      long:
+        prediction_length: 672   # 1 week; floor(2976/672) = 4 windows
+
+
+########################### Healthcare ###########################
   ECDC_COVID/D:
     test_length: 60
-    val_length: 60
+    val_length: 30
     short:
       prediction_length: 7    # 7 days; ceil(60/7) = 9 windows
     medium:
       prediction_length: 14    # 14 days; ceil(60/14) = 4 windows
     long:
       prediction_length: 30    # 30 days; ceil(60/30) = 2 windows
-
-  CPHL/15T:
-      test_length: 1152  # 12 days
-      val_length: 1152
-      short:
-        prediction_length: 24    # 6h; 1152/24 = 48 windows
-      medium:
-        prediction_length: 96    # 1 day; 1152/96 = 12 windows
-      long:
-        prediction_length: 288   # 3 days; 1152/288 = 4 windows
-
-  CPHL/30T:
-      test_length: 1152  # 24 days
-      val_length: 1152
-      short:
-        prediction_length: 12    # 6h; 1152/12 = 96 windows
-      medium:
-        prediction_length: 48    # 1 day; 1152/48 = 24 windows
-      long:
-        prediction_length: 144   # 3 days; 1152/144 = 8 windows
-
-  Finland_Traffic/15T:
-      test_length: 672
-      val_length: 672
-      short:
-        prediction_length: 16    # 4 hours; 672/16 = 42 windows
-      medium:
-        prediction_length: 96    # 1 day; 672/96 = 7 windows
-      long:
-        prediction_length: 672   # 7 days; 672/672 = 1 window
-
-  Coastal_T_S/5T:
-      test_length: 4320  # 15 days
-      val_length: 4320
-      short:
-        prediction_length: 36    # 3 hours; 4320/36 = 120 windows
-      medium:
-        prediction_length: 288   # 24 hours; 4320/288 = 15 windows
-      long:
-        prediction_length: 864   # 3 days; 4320/864 = 5 windows
-
-  Coastal_T_S/15T:
-      test_length: 1440  # 15 days
-      val_length: 1440
-      short:
-        prediction_length: 12    # 3 hours; 1440/12 = 120 windows
-      medium:
-        prediction_length: 96    # 24 hours; 1440/96 = 15 windows
-      long:
-        prediction_length: 288   # 3 days; 1440/288 = 5 windows
-
-  Coastal_T_S/20T:
-      test_length: 1080  # 15 days
-      val_length: 1080
-      short:
-        prediction_length: 9     # 3 hours; 1080/9 = 120 windows
-      medium:
-        prediction_length: 72    # 24 hours; 1080/72 = 15 windows
-      long:
-        prediction_length: 216   # 3 days; 1080/216 = 5 windows
-
-  current_velocity/5T:
-    test_length: 4320  # 15 days
-    val_length: 4320
-    short:
-      prediction_length: 36    # 3 hours; 4320/36 = 120 windows
-    medium:
-      prediction_length: 288   # 24 hours; 4320/288 = 15 windows
-    long:
-      prediction_length: 864   # 3 days; 4320/864 = 5 windows
-
-  current_velocity/10T:
-    test_length: 2160  # 15 days
-    val_length: 2160
-    short:
-      prediction_length: 18    # 3 hours; 2160/18 = 120 windows
-    medium:
-      prediction_length: 144   # 24 hours; 2160/144 = 15 windows
-    long:
-      prediction_length: 432   # 3 days; 2160/432 = 5 windows
-
-  current_velocity/15T:
-    test_length: 1440
-    val_length: 1440
-    short:
-      prediction_length: 12    # 3 hours; 1440/12 = 120 windows
-    medium:
-      prediction_length: 96    # 24 hours; 1440/96 = 15 windows
-    long:
-      prediction_length: 288   # 3 days; 1440/288 = 5 windows
-
-
-  current_velocity/20T:
-    test_length: 1080
-    val_length: 1080
-    short:
-      prediction_length: 9     # 3 hours; 1080/9 = 120 windows
-    medium:
-      prediction_length: 72    # 24 hours; 1080/72 = 15 windows
-    long:
-      prediction_length: 216   # 3 days; 1080/216 = 5 windows
-
-
-  current_velocity/H:
-    test_length: 672
-    val_length: 672
-    short:
-      prediction_length: 24     # 1 day; 672/24 = 28 windows
-    medium:
-      prediction_length: 168    # 7 days; 672/168 = 4 windows
-    long:
-      prediction_length: 336    # 14 days; 672/336 = 2 windows

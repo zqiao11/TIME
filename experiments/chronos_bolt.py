@@ -18,7 +18,6 @@ from timebench.evaluation.data import (
     get_dataset_settings,
     load_dataset_config,
 )
-from timebench.evaluation.metrics import compute_per_window_metrics
 
 load_dotenv()
 
@@ -32,20 +31,20 @@ class MultivariateForecast:
         # quantile_input 可以是:
         # 1. 单个 Tensor: (num_quantiles, prediction_length) [单变量]
         # 2. Tensor 列表: [Tensor(Q, T), Tensor(Q, T), ...] [多变量拆解后]
-        
+
         # [修改 1] 处理输入类型: List[Tensor] -> Numpy Array
         if isinstance(quantile_input, list):
             # 列表中的每个元素应该是 (num_quantiles, prediction_length) 的 tensor
             # 我们需要把它们堆叠成 (num_quantiles, num_variates, prediction_length)
             # 注意：Chronos Bolt 输出是 (Q, T)
-            
+
             # 先转 CPU Numpy
             np_list = [t.cpu().float().numpy() if isinstance(t, torch.Tensor) else t for t in quantile_input]
-            
+
             # Stack along axis 1 (variates)
             # data shape: (num_quantiles, num_variates, prediction_length)
             data = np.stack(np_list, axis=1)
-            
+
         elif isinstance(quantile_input, torch.Tensor):
             data = quantile_input.cpu().float().numpy()
             # 如果是单个 Tensor，可能是 (Q, T) 或 (Q, V, T)
@@ -59,15 +58,15 @@ class MultivariateForecast:
                 data = data[:, np.newaxis, :]
 
         # [修改 2] 此时 data 必然是 (Q, V, T) 格式的 Numpy Array
-        
+
         # Bolt 输出的是分位数，我们取这些分位数的均值作为对分布的最佳点估计
         # Shape 变为: (num_variates, prediction_length)
         # axis=0 是 quantile 维度
         mean_val = np.mean(data, axis=0)
-        
+
         # 设置 _mean
         self._mean = mean_val
-        
+
         # 设置 _samples
         # 为了适配 Timebench 的 (100, V, T) 数组，我们将 sample shape 设为 (1, V, T)。
         # Numpy 在赋值时会将 (1, V, T) 自动广播(复制)填充到 (10, V, T)。
@@ -95,7 +94,7 @@ def run_chronos_experiment(
     model_size: str = "base",
     output_dir: str | None = None,
     batch_size: int = 512,
-    num_samples: int = 100, 
+    num_samples: int = 100,
     context_length: int = 512,
     cuda_device: str = "0",
     config_path: Path | None = None,
@@ -145,7 +144,7 @@ def run_chronos_experiment(
         dataset = Dataset(
             name=dataset_name,
             term=term,
-            to_univariate=False, 
+            to_univariate=False,
             prediction_length=prediction_length,
             test_split=test_split,
             val_split=val_split,
@@ -164,10 +163,10 @@ def run_chronos_experiment(
         # 1. 准备数据
         flat_context_tensors = []
         instance_dims = []
-        
+
         for d in eval_data.input:
             target = np.asarray(d["target"])
-            
+
             # --- [FIX START] Manually truncate context ---
             # 确保输入长度不超过 context_length，从末尾截取
             seq_len = target.shape[-1]
@@ -186,21 +185,21 @@ def run_chronos_experiment(
 
         # 2. 批量推理
         flat_forecast_tensors = []
-        
+
         if batch_size > 0:
             total_items = len(flat_context_tensors)
             # Bolt 推理非常快，为了进度可见，可以加上简单的计数或者使用 tqdm (如果可用)
             for start in range(0, total_items, batch_size):
                 end = min(start + batch_size, total_items)
                 batch_contexts = flat_context_tensors[start:end]
-                
+
                 with torch.no_grad():
                     # Bolt 输出 shape: (Batch, Quantiles, Time)
                     batch_output = pipeline.predict(
-                        inputs=batch_contexts, 
+                        inputs=batch_contexts,
                         prediction_length=prediction_length
                     )
-                
+
                 # 将 batch tensor 切片后存入列表 (转回 CPU 以节省显存)
                 batch_output = batch_output.cpu()
                 for i in range(batch_output.shape[0]):
@@ -214,10 +213,10 @@ def run_chronos_experiment(
             # component_tensors 是 List[Tensor]，每个 shape (Q, T)
             component_tensors = flat_forecast_tensors[cursor : cursor + dim]
             cursor += dim
-            
+
             # 正确调用: 传入 Tensor 列表
             forecasts.append(MultivariateForecast(component_tensors))
-        
+
         print(f"  Predictions generated. Merged instances: {len(forecasts)}")
 
         if not use_val:
@@ -237,7 +236,7 @@ def run_chronos_experiment(
                 seasonality=season_length,
                 model_hyperparams=model_hyperparams,
             )
-            
+
             print(f"  Completed: {metadata['num_series']} series × {metadata['num_windows']} windows")
             print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
