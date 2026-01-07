@@ -116,7 +116,7 @@ class Dataset:
         to_univariate: bool = False,
         prediction_length: Optional[int] = None,
         test_length: int = None,
-        val_length: int = None,
+        val_length: int = 0,
         storage_env_var: str = "GIFT_EVAL",
     ):
         """
@@ -278,22 +278,20 @@ class Dataset:
     def windows(self) -> int:
         """
         Get number of test windows.
-        Auto-calculated: ceil(test_length / prediction_length)
+        Auto-calculated: floor(test_length / prediction_length)
         """
         self._validate_lengths()
-        w = math.ceil(self._test_length / self.prediction_length)
-        # return min(max(1, w), MAX_WINDOW)
+        w = math.floor(self._test_length / self.prediction_length)
         return max(1, w)
 
     @cached_property
     def val_windows(self) -> int:
         """
         Get number of validation windows.
-        Auto-calculated: ceil(val_length / prediction_length)
+        Auto-calculated: floor(val_length / prediction_length)
         """
         self._validate_lengths()
-        w = math.ceil(self._val_length / self.prediction_length)
-        # return min(max(1, w), MAX_WINDOW)
+        w = math.floor(self._val_length / self.prediction_length)
         return max(1, w)
 
     @cached_property
@@ -345,7 +343,7 @@ class Dataset:
     @property
     def test_data(self) -> TestData:
         _, test_template = split(
-            self.gluonts_dataset, offset=-self.prediction_length * self.windows
+            self.gluonts_dataset, offset=-self._test_length
         )
         test_data = test_template.generate_instances(
             prediction_length=self.prediction_length,
@@ -362,9 +360,8 @@ class Dataset:
         """
         # Split at offset that includes both test and val windows
         # Validation set is before test set, so we need to split further back
-        total_test_val_windows = self.windows + self.val_windows
         _, val_template = split(
-            self.gluonts_dataset, offset=-self.prediction_length * total_test_val_windows
+            self.gluonts_dataset, offset=-(self._test_length+self._val_length)
         )
         # Generate validation instances starting from the split point
         val_data = val_template.generate_instances(
