@@ -133,8 +133,8 @@ datasets:
         prediction_length: 216   # 3 days; 1080/216 = 5 windows
 
   SG_Weather/D:
-    test_length: 365
-    val_length: 365
+    test_length: 366
+    val_length: 366
     short:
       prediction_length: 3  # 3 days; ceil(365/3) = 122 windows
     medium:
@@ -160,38 +160,38 @@ datasets:
     medium:
       prediction_length: 72    # 3 days; 720/72 = 10 windows
     long:
-      prediction_length: 168    # 7 days; ceil(720/168) = 5 windows
+      prediction_length: 168    # 7 days; floor(720/168) = 4 windows
 
   ########################### Energy ###########################
   Australia_Solar/H:
-    test_length: 2160  # 90 days
-    val_length: 2160
+    test_length: 2520  # 15 W
+    val_length: 2520
     short:
-      prediction_length: 24    # 1 day; 2160/24 = 90 windows
+      prediction_length: 24    # 1 day; 105 windows
     medium:
-      prediction_length: 72    # 3 days; 2160/72 = 30 windows
+      prediction_length: 72    # 3 days; 35 windows
     long:
-      prediction_length: 168    # 7 days; ceil(2160/168) = 13 windows
+      prediction_length: 168    # 7 days; 15 windows
 
   epf_electricity_price/H:
-    test_length: 2160  # 90 days
-    val_length: 2160
+    test_length: 2520  # 15 W
+    val_length: 2520
     short:
-      prediction_length: 24    # 1 day; 2160/24 = 90 windows
+      prediction_length: 24    # 1 day; 105 windows
     medium:
-      prediction_length: 72    # 3 days; 2160/72 = 30 windows
+      prediction_length: 72    # 3 days; 35 windows
     long:
-      prediction_length: 168    # 7 days; ceil(2160/168) = 13 windows
+      prediction_length: 168    # 7 days; 15 windows
 
   OpenElectricity_NEM/5T:
-    test_length: 2016  # 1 week
-    val_length: 2016
+    test_length: 4032  # 1 week
+    val_length: 4032
     short:
-      prediction_length: 12    # 1h; 2016/12 = 168 windows
+      prediction_length: 24    # 2h; 4032/24 = 168 windows
     medium:
-      prediction_length: 48    # 4h; 2016/48 = 42 windows
+      prediction_length: 96    # 8h;
     long:
-      prediction_length: 288   # 24h; 2016/288 = 7 windows
+      prediction_length: 288   # 24h; 4032/288 = 14 windows
 
   EWELD_Load/15T:
     test_length: 1344  # 2 weeks
@@ -201,7 +201,7 @@ datasets:
     medium:
       prediction_length: 96    # 96 * 15min = 1 day; 1344/96 = 14 windows
     long:
-      prediction_length: 672   # 384 * 15min = 3 days; 1344/672 = 2 windows
+      prediction_length: 672   # 672 * 15min = 7 days; 1344/672 = 2 windows
 
 
 ########################### Transportation ###########################
@@ -217,7 +217,7 @@ datasets:
 
   Finland_Traffic/15T:
       test_length: 2976  # 31 days
-      val_length: 2976
+      val_length: 2880
       short:
         prediction_length: 16    # 4 hours; 2976/16 = 186 windows
       medium:
@@ -228,11 +228,18 @@ datasets:
 
 ########################### Healthcare ###########################
   ECDC_COVID/D:
-    test_length: 60
+    test_length: 120
     val_length: 30
     short:
-      prediction_length: 7    # 7 days; ceil(60/7) = 9 windows
+      prediction_length: 7    # 7 days; floor(120/7) = 17 windows
     medium:
-      prediction_length: 14    # 14 days; ceil(60/14) = 4 windows
+      prediction_length: 14    # 14 days; floor(120/14) = 8 windows
     long:
-      prediction_length: 30    # 30 days; ceil(60/30) = 2 windows
+      prediction_length: 30    # 30 days; 120/30 = 4 windows
+
+
+  ECDC_COVID/W:
+    test_length: 20
+    val_length: 10
+    short:
+      prediction_length: 4    # 5 windows
