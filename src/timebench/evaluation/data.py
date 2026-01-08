@@ -33,8 +33,25 @@ PRED_LENGTH_MAP = {
     "M": 12, "W": 8, "D": 30, "H": 48, "T": 48, "S": 60,
 }
 
-# Default config path (relative to this file's directory)
-DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "config" / "datasets.yaml"
+# Default config path - try multiple locations
+# 1. Inside the timebench package (for pip install from GitHub)
+# 2. Project root config directory (for local development)
+def _find_default_config_path() -> Path:
+    """Find the default config path, checking multiple locations."""
+    # Option 1: Inside the timebench package (pip install)
+    package_config = Path(__file__).parent.parent / "config" / "datasets.yaml"
+    if package_config.exists():
+        return package_config
+
+    # Option 2: Project root config directory (local development)
+    project_config = Path(__file__).parent.parent.parent.parent / "config" / "datasets.yaml"
+    if project_config.exists():
+        return project_config
+
+    # Fallback to package config path (even if doesn't exist yet)
+    return package_config
+
+DEFAULT_CONFIG_PATH = _find_default_config_path()
 
 
 class Term(Enum):

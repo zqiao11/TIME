@@ -129,5 +129,6 @@ def get_test_window_start_timestamp(
 
 
 # window_start_ts, window_end_ts = get_test_window_start_timestamp("SG_PM25/H", "short", 0, 0)
-window_start_ts, window_end_ts = get_test_window_start_timestamp("Finland_Traffic/15T", "medium", 0, 30)
+# window_start_ts, window_end_ts = get_test_window_start_timestamp("Finland_Traffic/15T", "medium", 0, 30)
+window_start_ts, window_end_ts = get_test_window_start_timestamp("SG_Weather/D", "short", 0, 0)
 print(window_start_ts, window_end_ts)

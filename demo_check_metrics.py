@@ -11,6 +11,19 @@ importlib.reload(metrics_module)
 from timebench.evaluation.metrics import compute_per_window_metrics
 from gluonts.time_feature import get_seasonality
 
+from gluonts.ev.metrics import (
+    MSE,
+    MAE,
+    MASE,
+    MAPE,
+    SMAPE,
+    MSIS,
+    RMSE,
+    NRMSE,
+    ND,
+    MeanWeightedSumQuantileLoss,
+)
+
 # Set random seed for reproducibility
 np.random.seed(42)
 

@@ -70,10 +70,14 @@ path = "src/timebench/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/timebench"]
 
+# Include config files in the wheel package
+[tool.hatch.build.targets.wheel.force-include]
+"src/timebench/config" = "timebench/config"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
-    "/configs",
+    "/config",
 ]
 
 # --- Tool Configurations ---
