@@ -135,6 +135,7 @@ class Dataset:
         test_length: int = None,
         val_length: int = 0,
         storage_env_var: str = "GIFT_EVAL",
+        storage_path: Optional[str | Path] = None,
     ):
         """
         Initialize a TimeBench Dataset.
@@ -156,15 +157,22 @@ class Dataset:
             Length of validation set (in time steps). Required parameter.
             Val windows is auto-calculated: ceil(val_length / prediction_length)
         storage_env_var : str
-            Environment variable name for dataset storage path.
+            Environment variable name for dataset storage path (used if storage_path is None).
+        storage_path : str or Path, optional
+            Direct path to dataset storage. If provided, overrides storage_env_var.
         """
-        load_dotenv()
-        env_path = os.getenv(storage_env_var)
-        if not env_path:
-            raise ValueError(f"Environment variable '{storage_env_var}' not set.")
+        # Use direct storage_path if provided, otherwise fall back to environment variable
+        if storage_path is not None:
+            resolved_storage_path = Path(storage_path)
+        else:
+            load_dotenv()
+            env_path = os.getenv(storage_env_var)
+            if not env_path:
+                raise ValueError(f"Environment variable '{storage_env_var}' not set. "
+                               "Either set the environment variable or provide storage_path parameter.")
+            resolved_storage_path = Path(env_path)
 
-        storage_path = Path(env_path)
-        dataset_path = storage_path / name
+        dataset_path = resolved_storage_path / name
 
         if not dataset_path.exists():
             raise FileNotFoundError(f"Dataset not found at: {dataset_path}")
