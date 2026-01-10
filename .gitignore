@@ -99,3 +99,5 @@ data/
 classic_data/
 plot_analyze/
 debug.py
+*.txt
+lightning_logs/

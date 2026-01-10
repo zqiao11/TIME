@@ -44,6 +44,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Statistical models (Seasonal Naive, etc.)
+stats = [
+    "statsforecast>=1.7.0",
+]
+
+# Deep learning training dependencies (PatchTST, etc.)
+train = [
+    "torch>=2.0.0",
+    "lightning>=2.0.0",
+    "optuna>=3.0.0",
+]
+
 # Development dependencies
 dev = [
     "pytest>=7.0",
@@ -55,6 +67,8 @@ dev = [
 
 # All optional dependencies
 all = [
+    "timebench[stats]",
+    "timebench[train]",
     "timebench[dev]",
 ]
 

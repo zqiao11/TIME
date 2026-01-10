@@ -1,0 +1,128 @@
+# =============================================================================
+# PatchTST Model Configuration
+# =============================================================================
+# This configuration file defines the hyperparameter search space and
+# default training settings for the PatchTST model.
+#
+# Reference: https://arxiv.org/abs/2211.14730
+# =============================================================================
+
+name: patch_tst
+
+# -----------------------------------------------------------------------------
+# Default Estimator Settings
+# -----------------------------------------------------------------------------
+estimator:
+  # Training settings
+  batch_size: 128
+  num_batches_per_epoch: 100
+  max_epochs: 50
+
+  # Model architecture defaults
+  patch_len: 16
+  stride: 8
+  padding_patch: "end"
+  d_model: 128
+  nhead: 4
+  dim_feedforward: 256
+  num_encoder_layers: 2
+  dropout: 0.1
+  activation: "relu"
+  norm_first: false
+  scaling: "mean"
+
+  # Optimizer defaults
+  lr: 1e-3
+  weight_decay: 1e-8
+
+# -----------------------------------------------------------------------------
+# Optuna Hyperparameter Search Space
+# -----------------------------------------------------------------------------
+# Format for each hyperparameter:
+#   param_name:
+#     type: categorical | float | int
+#     values: [list] for categorical
+#     low: float for float/int
+#     high: float for float/int
+#     log: true/false for log-scale sampling
+# -----------------------------------------------------------------------------
+optuna:
+  # Model architecture
+  d_model:
+    type: categorical
+    values: [128, 256, 512]
+
+  num_encoder_layers:
+    type: categorical
+    values: [2, 3, 4]
+
+  patch_len:
+    type: categorical
+    values: [16]
+
+  nhead:
+    type: categorical
+    values: [4, 8]
+
+  # Optimizer
+  lr:
+    type: float
+    low: 1e-5
+    high: 1e-3
+    log: true
+
+  weight_decay:
+    type: float
+    low: 1e-8
+    high: 1e-2
+    log: true
+
+  # Regularization
+  dropout:
+    type: float
+    low: 0.0
+    high: 0.3
+    log: false
+
+# -----------------------------------------------------------------------------
+# Context Length Configuration
+# -----------------------------------------------------------------------------
+# Context length candidates are computed as multiples of prediction_length
+# For short term: [1x, 2x, 4x, 8x] * prediction_length
+# For medium/long term: 1x * prediction_length (fixed)
+context_length_multipliers:
+  short: [1, 2, 4, 8]
+  medium: [1]
+  long: [1]
+
+# -----------------------------------------------------------------------------
+# Training Configuration
+# -----------------------------------------------------------------------------
+training:
+  # Number of Optuna trials for hyperparameter search
+  n_trials: 15
+  max_trials: 15
+
+  # Early stopping settings
+  early_stopping:
+    patience: 10
+    min_delta: 0.0001
+    monitor: "val_loss"
+    mode: "min"
+
+  # Number of evaluation repeats (for variance estimation)
+  num_eval_repeats: 1
+
+  # Evaluation batch size
+  eval_batch_size: 128
+
+# -----------------------------------------------------------------------------
+# Callbacks Configuration
+# -----------------------------------------------------------------------------
+callbacks:
+  early_stopping:
+    patience: 10
+    min_delta: 0.0001
+    monitor: "val_loss"
+    mode: "min"
+
