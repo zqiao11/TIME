@@ -43,12 +43,10 @@ def save_window_predictions(
 
     Output files:
         predictions.npz:
-            - predictions_mean: (num_series, num_windows, num_variates, prediction_length)
             - predictions_samples: (num_series, num_windows, num_samples, num_variates, prediction_length)
 
         metrics.npz:
             - Each metric array with shape (num_series, num_windows, num_variates)
-            - Keys: MSE, MAE, RMSE, MAPE, sMAPE, MASE, ND, QuantileLoss_*, CRPS
 
         config.json:
             - Dataset configuration and config (without shapes and metric_shape)
@@ -62,8 +60,8 @@ def save_window_predictions(
 
     test_data = dataset.test_data
     num_windows = dataset.windows
-    num_variates = dataset.target_dim
     prediction_length = dataset.prediction_length
+    original_num_variates = dataset.target_dim  # Original variates before to_univariate
 
     # Get all forecasts
     print("    Generating predictions...")
@@ -71,9 +69,9 @@ def save_window_predictions(
 
     # Count number of series (test_data contains num_series * num_windows instances)
     num_total_instances = len(forecasts)
-    num_series = num_total_instances // num_windows
+    num_series_flat = num_total_instances // num_windows
 
-    print(f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}")
+    print(f"    Total instances: {num_total_instances}, Series (flat): {num_series_flat}, Windows: {num_windows}")
 
     # Collect ground truth labels and contexts for metrics computation
     print("    Collecting ground truth and context...")
@@ -86,55 +84,125 @@ def save_window_predictions(
     # Initialize arrays
     num_samples = 100  # Fixed to 100 for all models
 
+    # Determine if this is a to_univariate case by checking forecast shape
+    # In to_univariate case: forecasts are univariate but original dataset is multivariate
+    if len(forecasts) > 0:
+        first_fc = forecasts[0]
+        if hasattr(first_fc, 'samples'):
+            fc_samples_check = first_fc.samples
+        elif hasattr(first_fc, 'to_sample_forecast'):
+            sample_fc = first_fc.to_sample_forecast(num_samples=num_samples)
+            fc_samples_check = sample_fc.samples
+        else:
+            raise ValueError(f"Unknown forecast type: {type(first_fc)}")
+
+        # Check if forecasts are univariate
+        forecast_is_univariate = (fc_samples_check.ndim == 2) or \
+                                  (fc_samples_check.ndim == 3 and min(fc_samples_check.shape[1:]) == 1)
+    else:
+        forecast_is_univariate = False
+
+    # Detect to_univariate case: forecasts are univariate but original dataset has multiple variates
+    # In this case, num_series_flat = original_num_series * original_num_variates
+    is_to_univariate = forecast_is_univariate and original_num_variates > 1 and \
+                       (num_series_flat % original_num_variates == 0)
+
+    if is_to_univariate:
+        # Reverse the to_univariate transformation
+        # MultivariateToUnivariate expands as: series_0_dim0, series_0_dim1, ..., series_1_dim0, ...
+        num_series = num_series_flat // original_num_variates
+        num_variates = original_num_variates
+        print(f"    Detected to_univariate case: {num_series_flat} flat series -> {num_series} series x {num_variates} variates")
+    else:
+        num_series = num_series_flat
+        num_variates = original_num_variates if not forecast_is_univariate else 1
+
     predictions_samples = np.zeros((num_series, num_windows, num_samples, num_variates, prediction_length))
     ground_truth = np.zeros((num_series, num_windows, num_variates, prediction_length))
 
     # Find max context length for metrics computation
-    # context_length is the maximum length among all context windows.
-    # Different windows may have different context lengths (due to different series lengths
-    # or different window positions), so we find the maximum for reference.
     context_len = max(ctx.shape[-1] for ctx in contexts) if contexts else 0
     context_array = np.full((num_series, num_windows, num_variates, context_len), np.nan)
 
     print("    Organizing data into arrays...")
     for idx, (fc, gt, ctx) in enumerate(zip(forecasts, ground_truths, contexts)):
-        series_idx = idx // num_windows
-        window_idx = idx % num_windows
+        # Get forecast samples
+        if hasattr(fc, 'samples'):
+            fc_samples = fc.samples
+        elif hasattr(fc, 'to_sample_forecast'):
+            sample_fc = fc.to_sample_forecast(num_samples=num_samples)
+            fc_samples = sample_fc.samples
+        else:
+            raise ValueError(f"Unknown forecast type: {type(fc)}. Expected SampleForecast or DistributionForecast.")
 
-        # Get forecast mean and samples
-        fc_samples = fc.samples
-
-        # Handle univariate case (add dimension if needed)
+        # Normalize fc_samples to shape: (num_samples, 1, prediction_length) for univariate
+        # or (num_samples, num_variates, prediction_length) for multivariate
         if fc_samples.ndim == 2:
             fc_samples = fc_samples[:, np.newaxis, :]
-        elif fc_samples.shape[1] == prediction_length and fc_samples.shape[2] == num_variates:
-            fc_samples = fc_samples.transpose(0, 2, 1)
+        elif fc_samples.ndim == 3:
+            if fc_samples.shape[1] == prediction_length and fc_samples.shape[2] != prediction_length:
+                fc_samples = fc_samples.transpose(0, 2, 1)
 
+        # Normalize ground truth
         if gt.ndim == 1:
             gt = gt[np.newaxis, :]
-        elif gt.shape[0] == prediction_length and gt.shape[1] == num_variates:
+        elif gt.ndim == 2 and gt.shape[0] == prediction_length and gt.shape[1] != prediction_length:
             gt = gt.T
 
+        # Normalize context
         if ctx.ndim == 1:
             ctx = ctx[np.newaxis, :]
-        elif ctx.shape[0] != num_variates:
-            ctx = ctx.T
 
-        predictions_samples[series_idx, window_idx] = fc_samples
-        ground_truth[series_idx, window_idx] = gt
+        if is_to_univariate:
+            # In to_univariate case:
+            # idx iterates as: series_0_dim0_win0, series_0_dim0_win1, ..., series_0_dim1_win0, ...
+            # We need to map flat_series_idx to (series_idx, variate_idx)
+            flat_series_idx = idx // num_windows
+            window_idx = idx % num_windows
+            series_idx = flat_series_idx // num_variates
+            variate_idx = flat_series_idx % num_variates
 
-        # Store context (padded with NaN for shorter contexts) for metrics computation
-        ctx_len = ctx.shape[-1]
-        context_array[series_idx, window_idx, :, :ctx_len] = ctx
+            # fc_samples shape: (num_samples, 1, prediction_length)
+            predictions_samples[series_idx, window_idx, :, variate_idx, :] = fc_samples[:, 0, :]
+            ground_truth[series_idx, window_idx, variate_idx, :] = gt[0, :]
 
-    # Save predictions to npz file (only predictions, no ground_truth or context)
+            # Store context
+            ctx_len_actual = ctx.shape[-1]
+            context_array[series_idx, window_idx, variate_idx, :ctx_len_actual] = ctx[0, :]
+        else:
+            # Normal multivariate case
+            series_idx = idx // num_windows
+            window_idx = idx % num_windows
+
+            predictions_samples[series_idx, window_idx] = fc_samples
+            ground_truth[series_idx, window_idx] = gt
+
+            # Handle context shape mismatch
+            if ctx.shape[0] != num_variates and ctx.shape[-1] == num_variates:
+                ctx = ctx.T
+            ctx_len_actual = ctx.shape[-1]
+            context_array[series_idx, window_idx, :, :ctx_len_actual] = ctx
+
+    # Pre-compute quantiles for visualization (saves storage and simplifies frontend)
+    # Quantiles: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 (9 quantiles)
+    # predictions_samples shape: (num_series, num_windows, num_samples, num_variates, prediction_length)
+    # Output shape: (num_series, num_windows, 9, num_variates, prediction_length)
+    quantile_levels = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
+    predictions_quantiles = np.quantile(
+        predictions_samples, quantile_levels, axis=2
+    )  # shape: (9, num_series, num_windows, num_variates, prediction_length)
+    # Transpose to (num_series, num_windows, 9, num_variates, prediction_length)
+    predictions_quantiles = predictions_quantiles.transpose(1, 2, 0, 3, 4)
+
+    # Save quantiles to npz file (instead of full samples)
     # Use float16 to reduce storage (sufficient for visualization purposes)
     npz_path = os.path.join(ds_output_dir, "predictions.npz")
     np.savez_compressed(
         npz_path,
-        predictions_samples=predictions_samples.astype(np.float16),
+        predictions_quantiles=predictions_quantiles.astype(np.float16),
+        quantile_levels=quantile_levels.astype(np.float16),
     )
-    print(f"    Saved predictions to {npz_path}")
+    print(f"    Saved predictions (quantiles) to {npz_path}")
 
     # Compute per-window metrics
     print("    Computing per-window metrics...")
@@ -157,7 +225,8 @@ def save_window_predictions(
         "num_windows": num_windows,
         "num_variates": num_variates,
         "prediction_length": prediction_length,
-        "num_samples": num_samples,
+        "num_quantiles": len(quantile_levels),
+        "quantile_levels": quantile_levels.tolist(),
         "freq": dataset.freq,
         "seasonality": seasonality,
         "context_length": context_len,
