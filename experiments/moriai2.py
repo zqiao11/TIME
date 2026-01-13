@@ -5,7 +5,9 @@ Usage:
     python experiments/moriai2.py
     python experiments/moriai2.py --model-size small
     python experiments/moriai2.py --dataset "Coastal_T_S/5T" --terms short medium long
-    python experiments/moriai2.py --val
+    python experiments/moriai2.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/moriai2.py --dataset all_datasets  # Run all datasets from config
+    python experiments/moriai2.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse

@@ -6,7 +6,9 @@ Usage:
     python experiments/moirai_moe.py
     python experiments/moirai_moe.py --model-size base
     python experiments/moirai_moe.py --dataset "Traffic/15T" --terms short
-    python experiments/moirai_moe.py --dataset all_datasets
+    python experiments/moirai_moe.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/moirai_moe.py --dataset all_datasets  # Run all datasets from config
+    python experiments/moirai_moe.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse

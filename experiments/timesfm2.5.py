@@ -2,11 +2,13 @@
 TimesFM model experiments for time series forecasting.
 
 Usage:
-    python experiments/timesfm.py
-    python experiments/timesfm.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
-    python experiments/timesfm.py --dataset "SG_Weather/D" --batch-size 32
-    python experiments/timesfm.py --dataset all_datasets
-    python experiments/timesfm.py --val
+    python experiments/timesfm2.5.py
+    python experiments/timesfm2.5.py --model-size base
+    python experiments/timesfm2.5.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
+    python experiments/timesfm2.5.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/timesfm2.5.py --dataset "SG_Weather/D" --batch-size 32
+    python experiments/timesfm2.5.py --dataset all_datasets  # Run all datasets from config
+    python experiments/timesfm2.5.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
@@ -230,6 +232,8 @@ def run_timesfm_experiment(
             history = inp["target"]
             if history.ndim > 1:
                 history = history.squeeze()
+            if context_length is not None and history.shape[0] > context_length:
+                history = history[-context_length:]
             history = _impute_nans_1d(np.asarray(history))
             
             all_inputs.append(history)

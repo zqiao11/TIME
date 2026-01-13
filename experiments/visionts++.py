@@ -4,7 +4,12 @@ VisionTS++ model experiments for time series forecasting.
 (Adaptive: Batched for Multivariate, Sequential for Univariate/Variable Lengths)
 
 Usage:
-    python experiments/visiontspp.py --dataset "SG_Weather/D" --terms short
+    python experiments/visionts++.py
+    python experiments/visionts++.py --model-size base
+    python experiments/visionts++.py --dataset "SG_Weather/D" --terms short medium long
+    python experiments/visionts++.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/visionts++.py --dataset all_datasets  # Run all datasets from config
+    python experiments/visionts++.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse

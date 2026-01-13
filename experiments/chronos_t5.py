@@ -6,6 +6,7 @@ Usage:
     python experiments/chronos_t5.py
     python experiments/chronos_t5.py --model-size tiny
     python experiments/chronos_t5.py --dataset "SG_Weather/D" --terms short medium long
+    python experiments/chronos_t5.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/chronos_t5.py --dataset all_datasets  # Run all datasets from config
     python experiments/chronos_t5.py --val  # Evaluate on validation data (no saving)
 """

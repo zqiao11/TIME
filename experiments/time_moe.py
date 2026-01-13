@@ -3,10 +3,12 @@ TimeMoE model experiments for time series forecasting.
 (Aligned with TimeBench Moirai/VisionTS templates)
 
 Usage:
-    python experiments/timemoe.py
-    python experiments/timemoe.py --model-size base
-    python experiments/timemoe.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
-    python experiments/timemoe.py --dataset all_datasets
+    python experiments/time_moe.py
+    python experiments/time_moe.py --model-size base
+    python experiments/time_moe.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
+    python experiments/time_moe.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/time_moe.py --dataset all_datasets  # Run all datasets from config
+    python experiments/time_moe.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse

@@ -9,6 +9,7 @@ Usage:
     python experiments/tirex_model.py --model-id "NX-AI/TiRex"
     python experiments/tirex_model.py --model-size base
     python experiments/tirex_model.py --dataset "Traffic/15T" --terms short medium long
+    python experiments/tirex_model.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/tirex_model.py --dataset all_datasets  # Run all datasets from config
     python experiments/tirex_model.py --val  # Evaluate on validation data (no saving)
 """
@@ -127,11 +128,10 @@ def _prepare_context(series, target_length):
     """
     Ensure series is exactly target_length for batching.
     - If longer, crop to the last `target_length` points.
-    - If shorter, left pad with zeros.
+    - If shorter, left-pad with zeros to target_length.
     """
     if series.shape[0] >= target_length:
         return series[-target_length:]
-    
     pad_len = target_length - series.shape[0]
     pad = np.zeros((pad_len,), dtype=series.dtype)
     return np.concatenate([pad, series], axis=0)

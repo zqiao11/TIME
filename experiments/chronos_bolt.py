@@ -5,7 +5,9 @@ Usage:
     python experiments/chronos_bolt.py
     python experiments/chronos_bolt.py --model-size base
     python experiments/chronos_bolt.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
-    python experiments/chronos_bolt.py --dataset all_datasets
+    python experiments/chronos_bolt.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/chronos_bolt.py --dataset all_datasets  # Run all datasets from config
+    python experiments/chronos_bolt.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse

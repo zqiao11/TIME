@@ -2,10 +2,12 @@
 TabPFN-TS model experiments for time series forecasting.
 
 Usage:
-    python experiments/tabpfn.py
-    python experiments/tabpfn.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
-    python experiments/tabpfn.py --dataset all_datasets
-    python experiments/tabpfn.py --val
+    python experiments/tabpfn_model.py
+    python experiments/tabpfn_model.py --model-size base
+    python experiments/tabpfn_model.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
+    python experiments/tabpfn_model.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/tabpfn_model.py --dataset all_datasets  # Run all datasets from config
+    python experiments/tabpfn_model.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
@@ -43,12 +45,6 @@ def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
     series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
     return series
 
-
-def _prepare_series(series: np.ndarray, context_length: int | None) -> np.ndarray:
-    series = np.asarray(series, dtype=np.float32)
-    if context_length is not None and series.shape[0] > context_length:
-        series = series[-context_length:]
-    return _impute_nans_1d(series)
 
 
 def _to_timestamp(start_value) -> pd.Timestamp:
@@ -445,7 +441,7 @@ def main():
                         help="TabPFN-TS model size")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Output directory for results")
-    parser.add_argument("--batch-size", type=int, default=64,
+    parser.add_argument("--batch-size", type=int, default=512,
                         help="Batch size (number of univariate series per batch)")
     parser.add_argument("--context-length", type=int, default=4000,
                         help="Maximum context length")

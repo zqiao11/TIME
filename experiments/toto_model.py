@@ -4,9 +4,11 @@ Toto model experiments for time series forecasting.
 Usage:
     python experiments/toto_model.py
     python experiments/toto_model.py --model-id "Datadog/Toto-Open-Base-1.0"
+    python experiments/toto_model.py --model-size base
     python experiments/toto_model.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
-    python experiments/toto_model.py --dataset all_datasets
-    python experiments/toto_model.py --val
+    python experiments/toto_model.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/toto_model.py --dataset all_datasets  # Run all datasets from config
+    python experiments/toto_model.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse

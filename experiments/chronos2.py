@@ -6,7 +6,9 @@ Usage:
     python experiments/chronos2.py
     python experiments/chronos2.py --model-size chronos2
     python experiments/chronos2.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
+    python experiments/chronos2.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/chronos2.py --dataset all_datasets  # Run all datasets from config
+    python experiments/chronos2.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse

@@ -6,8 +6,9 @@ Usage:
     python experiments/kairos_model.py --model-size 50m
     python experiments/kairos_model.py --model-id "mldi-lab/Kairos_50m"
     python experiments/kairos_model.py --dataset "SG_Weather/D" --terms short medium long
-    python experiments/kairos_model.py --dataset all_datasets
-    python experiments/kairos_model.py --val
+    python experiments/kairos_model.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
+    python experiments/kairos_model.py --dataset all_datasets  # Run all datasets from config
+    python experiments/kairos_model.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
@@ -68,7 +69,7 @@ def _prepare_context(series, target_length):
     """
     Ensure series is exactly target_length for batching.
     - If longer, crop to the last `target_length` points (standard context window).
-    - If shorter, left pad (required for torch.stack).
+    - If shorter, keep original length (no padding).
     """
     if isinstance(series, torch.Tensor):
         series_t = series.float()
@@ -78,9 +79,7 @@ def _prepare_context(series, target_length):
     if series_t.shape[-1] >= target_length:
         return series_t[..., -target_length:]
 
-    pad_len = target_length - series_t.shape[-1]
-    pad = torch.zeros((*series_t.shape[:-1], pad_len), dtype=series_t.dtype)
-    return torch.cat([pad, series_t], dim=-1)
+    return series_t
 
 
 def _normalize_quantile_output(quantiles: np.ndarray, prediction_length: int) -> np.ndarray:
