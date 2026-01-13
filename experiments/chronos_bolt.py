@@ -1,76 +1,88 @@
+"""
+Chronos-Bolt model experiments for time series forecasting.
+
+Usage:
+    python experiments/chronos_bolt.py
+    python experiments/chronos_bolt.py --model-size base
+    python experiments/chronos_bolt.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
+    python experiments/chronos_bolt.py --dataset all_datasets
+"""
+
 import argparse
 import os
 import sys
 from pathlib import Path
-import torch
-import numpy as np
 
 # Ensure timebench is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+import numpy as np
+import torch
 from dotenv import load_dotenv
-from chronos import BaseChronosPipeline
 from gluonts.time_feature import get_seasonality
+from transformers import logging as hf_logging
 
-from timebench.evaluation import save_window_predictions
+# Chronos Import
+from chronos import BaseChronosPipeline
+
+from timebench.evaluation.saver import save_window_quantile_predictions
 from timebench.evaluation.data import (
     Dataset,
     get_dataset_settings,
     load_dataset_config,
 )
 
+# Load environment variables
 load_dotenv()
 
-# --- 辅助类 1: 包装多变量结果 (修正版) ---
+
+# ==========================================
+
+def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
+    series = series.astype(np.float32, copy=False)
+    if not np.isnan(series).any():
+        return series
+    idx = np.arange(series.shape[0])
+    mask = np.isfinite(series)
+    if mask.sum() == 0:
+        return np.nan_to_num(series, nan=0.0)
+    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
+    return series
+
+
+def _clean_nan_target(series: np.ndarray) -> np.ndarray:
+    if series.ndim == 1:
+        return _impute_nans_1d(series)
+    if series.ndim == 2:
+        cleaned = np.empty_like(series, dtype=np.float32)
+        for i in range(series.shape[0]):
+            cleaned[i] = _impute_nans_1d(series[i])
+        return cleaned
+    return np.nan_to_num(series, nan=0.0)
+
+
 class MultivariateForecast:
     """
-    将 Chronos-Bolt 的输出包装成 Timebench 可用的对象。
-    策略：计算分位数的均值作为单样本，利用广播机制适配 num_samples=100。
+    Adapts Chronos-Bolt quantiles to Timebench forecast API.
     """
-    def __init__(self, quantile_input):
-        # quantile_input 可以是:
-        # 1. 单个 Tensor: (num_quantiles, prediction_length) [单变量]
-        # 2. Tensor 列表: [Tensor(Q, T), Tensor(Q, T), ...] [多变量拆解后]
+    def __init__(
+        self,
+        quantiles,
+        quantile_levels: list[float],
+    ):
+        q_data = quantiles
+        if isinstance(q_data, torch.Tensor):
+            q_data = q_data.cpu().float().numpy()
 
-        # [修改 1] 处理输入类型: List[Tensor] -> Numpy Array
-        if isinstance(quantile_input, list):
-            # 列表中的每个元素应该是 (num_quantiles, prediction_length) 的 tensor
-            # 我们需要把它们堆叠成 (num_quantiles, num_variates, prediction_length)
-            # 注意：Chronos Bolt 输出是 (Q, T)
+        q_data = np.asarray(q_data, dtype=np.float32)
+        if q_data.ndim == 2:
+            q_data = q_data[:, np.newaxis, :]
 
-            # 先转 CPU Numpy
-            np_list = [t.cpu().float().numpy() if isinstance(t, torch.Tensor) else t for t in quantile_input]
+        self._quantiles = q_data
+        self._quantile_levels = [float(q) for q in quantile_levels]
 
-            # Stack along axis 1 (variates)
-            # data shape: (num_quantiles, num_variates, prediction_length)
-            data = np.stack(np_list, axis=1)
-
-        elif isinstance(quantile_input, torch.Tensor):
-            data = quantile_input.cpu().float().numpy()
-            # 如果是单个 Tensor，可能是 (Q, T) 或 (Q, V, T)
-            if data.ndim == 2:
-                # (Q, T) -> (Q, 1, T)
-                data = data[:, np.newaxis, :]
-        else:
-            # 假设已经是 numpy array
-            data = quantile_input
-            if data.ndim == 2:
-                data = data[:, np.newaxis, :]
-
-        # [修改 2] 此时 data 必然是 (Q, V, T) 格式的 Numpy Array
-
-        # Bolt 输出的是分位数，我们取这些分位数的均值作为对分布的最佳点估计
-        # Shape 变为: (num_variates, prediction_length)
-        # axis=0 是 quantile 维度
-        mean_val = np.mean(data, axis=0)
-
-        # 设置 _mean
-        self._mean = mean_val
-
-        # 设置 _samples
-        # 为了适配 Timebench 的 (100, V, T) 数组，我们将 sample shape 设为 (1, V, T)。
-        # Numpy 在赋值时会将 (1, V, T) 自动广播(复制)填充到 (10, V, T)。
-        self._samples = mean_val[np.newaxis, :, :]
+        self._samples = q_data
+        self._mean = np.mean(self._samples, axis=0)
 
     @property
     def samples(self):
@@ -80,164 +92,282 @@ class MultivariateForecast:
     def mean(self):
         return self._mean
 
-# --- 辅助类 2: Mock Predictor (保持不变) ---
-class MockPredictor:
-    def __init__(self, precomputed_forecasts):
-        self.forecasts = precomputed_forecasts
-    def predict(self, dataset_input, **kwargs):
-        return self.forecasts
+    def quantile(self, q: float):
+        q_levels = np.asarray(self._quantile_levels, dtype=float)
+        matches = np.where(np.isclose(q_levels, q, atol=1e-6))[0]
+        if matches.size == 0:
+            raise ValueError(f"Quantile {q} not available. Supported: {self._quantile_levels}")
+        return self._quantiles[int(matches[0])]
+
+    def cpu(self):
+        return self
 
 
-def run_chronos_experiment(
+class ChronosBoltPredictor:
+    """
+    Wrapper to make Chronos-Bolt behave like a GluonTS Predictor.
+    """
+    def __init__(
+        self, 
+        pipeline: BaseChronosPipeline, 
+        prediction_length: int, 
+        quantile_levels: list[float],
+        batch_size: int = 32,
+        context_length: int = 512
+    ):
+        self.pipeline = pipeline
+        self.prediction_length = prediction_length
+        self.batch_size = batch_size
+        self.context_length = context_length
+        self.quantile_levels = quantile_levels
+
+    def predict(self, dataset, **kwargs):
+        """
+        Iterates over the dataset, batches inputs, and yields forecast objects.
+        """
+        flat_contexts = []
+        instance_dims = []
+
+        for entry in dataset:
+            target = entry["target"]
+
+            if isinstance(target, torch.Tensor):
+                target_np = target.detach().cpu().numpy()
+            else:
+                target_np = np.asarray(target)
+
+            target_np = target_np.astype(np.float32, copy=False)
+
+            if target_np.ndim == 1:
+                target_np = target_np[np.newaxis, :]
+            elif target_np.ndim == 2 and target_np.shape[0] > target_np.shape[1]:
+                target_np = target_np.T
+
+            if self.context_length is not None and target_np.shape[-1] > self.context_length:
+                target_np = target_np[..., -self.context_length:]
+
+            target_np = _clean_nan_target(target_np)
+
+            num_vars = target_np.shape[0]
+            for v in range(num_vars):
+                flat_contexts.append(torch.from_numpy(target_np[v]).float())
+            instance_dims.append(num_vars)
+
+        flat_quantiles = []
+        for start in range(0, len(flat_contexts), self.batch_size):
+            end = min(start + self.batch_size, len(flat_contexts))
+            flat_quantiles.extend(self._process_batch(flat_contexts[start:end]))
+
+        forecasts = []
+        cursor = 0
+        for dim in instance_dims:
+            component_q = flat_quantiles[cursor: cursor + dim]
+            cursor += dim
+
+            q_list = []
+            for q in component_q:
+                q_np = q.cpu().float().numpy() if isinstance(q, torch.Tensor) else q
+                if (
+                    q_np.ndim == 2
+                    and q_np.shape[0] == self.prediction_length
+                    and q_np.shape[1] == len(self.quantile_levels)
+                ):
+                    q_np = q_np.T
+                q_list.append(q_np)
+
+            q_stack = np.stack(q_list, axis=1) if q_list else np.empty((0, 0, 0))
+            forecasts.append(
+                MultivariateForecast(
+                    q_stack,
+                    quantile_levels=self.quantile_levels,
+                )
+            )
+
+        for fc in forecasts:
+            yield fc
+
+    def _process_batch(self, contexts):
+
+        # 在这个上下文里，所有的 stderr 输出都会经过 ContentFilterStderr
+        quantiles, _ = self.pipeline.predict_quantiles(
+            contexts,
+            prediction_length=self.prediction_length,
+            quantile_levels=self.quantile_levels
+        )
+
+        if isinstance(quantiles, torch.Tensor):
+            if quantiles.ndim == 3 and quantiles.shape[-1] == len(self.quantile_levels):
+                quantiles = quantiles.permute(0, 2, 1)
+            return [quantiles[i] for i in range(quantiles.shape[0])]
+        return quantiles
+
+
+def run_chronos_bolt_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] = None,
     model_size: str = "base",
     output_dir: str | None = None,
-    batch_size: int = 512,
-    num_samples: int = 100,
-    context_length: int = 512,
+    batch_size: int = 32,
+    context_length: int = 512, 
     cuda_device: str = "0",
     config_path: Path | None = None,
     use_val: bool = False,
+    quantile_levels: list[float] | None = None,
 ):
     os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
-    device_map = "cuda" if torch.cuda.is_available() else "cpu"
-
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
     if terms is None:
         terms = ["short", "medium", "long"]
+    if quantile_levels is None:
+        quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
     if output_dir is None:
         output_dir = f"./output/results/chronos_bolt_{model_size}"
-    os.makedirs(output_dir, exist_ok=True)
 
-    model_map = {
-        "tiny": "amazon/chronos-bolt-tiny",
-        "mini": "amazon/chronos-bolt-mini",
-        "small": "amazon/chronos-bolt-small",
-        "base": "amazon/chronos-bolt-base",
-    }
-    hf_model_path = model_map.get(model_size, "amazon/chronos-bolt-base")
+    os.makedirs(output_dir, exist_ok=True)
 
     print(f"\n{'='*60}")
     print(f"Dataset: {dataset_name}")
-    print(f"Model: {hf_model_path}")
+    print(f"Model: amazon/chronos-bolt-{model_size}")
+    print(f"Terms: {terms}")
+    print(f"Evaluation on: {'Validation data (no saving)' if use_val else 'Test data'}")
     print(f"{'='*60}")
+
+    model_name = f"amazon/chronos-bolt-{model_size}"
+    print(f"Loading Chronos-Bolt model: {model_name}...")
+    
+    device_map = "cuda" if torch.cuda.is_available() else "cpu"
+    pipeline = BaseChronosPipeline.from_pretrained(
+        model_name,
+        device_map=device_map,
+        torch_dtype=torch.bfloat16,
+    )
 
     for term in terms:
         print(f"\n--- Term: {term} ---")
         settings = get_dataset_settings(dataset_name, term, config)
         prediction_length = settings.get("prediction_length")
-        test_split = settings.get("test_split")
-        val_split = settings.get("val_split")
-        print(f"  Config: prediction_length={prediction_length}")
+        test_length = settings.get("test_length")
+        val_length = settings.get("val_length")
 
-        print(f"  Initializing Chronos Bolt pipeline ({hf_model_path})...")
-        pipeline = BaseChronosPipeline.from_pretrained(
-            hf_model_path,
-            device_map=device_map,
-            torch_dtype=torch.bfloat16,
-        )
+        print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
+        to_univariate = True
         dataset = Dataset(
             name=dataset_name,
             term=term,
-            to_univariate=False,
+            to_univariate=to_univariate,
             prediction_length=prediction_length,
-            test_split=test_split,
-            val_split=val_split,
+            test_length=test_length,
+            val_length=val_length,
         )
 
         if use_val:
+            data_length = val_length
+            num_windows = dataset.val_windows
             eval_data = dataset.val_data
         else:
+            data_length = test_length
+            num_windows = dataset.windows
             eval_data = dataset.test_data
 
+        print("  Dataset info:")
+        print(f"    - Frequency: {dataset.freq}")
+        print(f"    - Prediction length: {dataset.prediction_length}")
+        print(f"    - Windows: {num_windows}")
+
+        predictor = ChronosBoltPredictor(
+            pipeline=pipeline,
+            prediction_length=dataset.prediction_length,
+            quantile_levels=quantile_levels,
+            batch_size=batch_size,
+            context_length=context_length
+        )
+        
         season_length = get_seasonality(dataset.freq)
 
-        # --- 手动执行预测流程 ---
-        print(f"  Running predictions (manual batch processing)...")
+        print(f"  Running predictions...")
+        forecasts = list(predictor.predict(eval_data.input))
 
-        # 1. 准备数据
-        flat_context_tensors = []
-        instance_dims = []
+        num_total_instances = len(forecasts)
+        num_series = num_total_instances // num_windows
+        num_variates = dataset.target_dim
 
-        for d in eval_data.input:
-            target = np.asarray(d["target"])
+        print(f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}")
+        print("    Collecting ground truth and context...")
+        
+        ground_truths = []
+        contexts = []
+        for inp, label in eval_data:
+            ground_truths.append(label["target"])
+            contexts.append(inp["target"])
 
-            # --- [FIX START] Manually truncate context ---
-            # 确保输入长度不超过 context_length，从末尾截取
-            seq_len = target.shape[-1]
-            if seq_len > context_length:
-                target = target[..., -context_length:]
-            # --- [FIX END] ---
+        if not to_univariate:
+            actual_num_samples = (
+                forecasts[0].samples.shape[0]
+                if len(forecasts) > 0
+                else len(predictor.quantile_levels)
+            )
 
-            if target.ndim == 2:
-                num_vars = target.shape[0]
-                for v in range(num_vars):
-                    flat_context_tensors.append(torch.tensor(target[v]))
-                instance_dims.append(num_vars)
-            else:
-                flat_context_tensors.append(torch.tensor(target))
-                instance_dims.append(1)
+            predictions_mean = np.zeros((num_series, num_windows, num_variates, prediction_length))
+            predictions_samples = np.zeros((num_series, num_windows, actual_num_samples, num_variates, prediction_length))
+            ground_truth = np.zeros((num_series, num_windows, num_variates, prediction_length))
 
-        # 2. 批量推理
-        flat_forecast_tensors = []
+            max_context_len = max(ctx.shape[-1] for ctx in contexts)
+            max_context_len = min(max_context_len, context_length * 2)
+            context_array = np.full((num_series, num_windows, num_variates, max_context_len), np.nan)
 
-        if batch_size > 0:
-            total_items = len(flat_context_tensors)
-            # Bolt 推理非常快，为了进度可见，可以加上简单的计数或者使用 tqdm (如果可用)
-            for start in range(0, total_items, batch_size):
-                end = min(start + batch_size, total_items)
-                batch_contexts = flat_context_tensors[start:end]
+            print("    Organizing data into arrays...")
+            for idx, (fc, gt, ctx) in enumerate(zip(forecasts, ground_truths, contexts)):
+                series_idx = idx // num_windows
+                window_idx = idx % num_windows
 
-                with torch.no_grad():
-                    # Bolt 输出 shape: (Batch, Quantiles, Time)
-                    batch_output = pipeline.predict(
-                        inputs=batch_contexts,
-                        prediction_length=prediction_length
-                    )
+                fc_mean = fc.mean
+                fc_samples = fc.samples
 
-                # 将 batch tensor 切片后存入列表 (转回 CPU 以节省显存)
-                batch_output = batch_output.cpu()
-                for i in range(batch_output.shape[0]):
-                    flat_forecast_tensors.append(batch_output[i])
+                if fc_mean.ndim == 1:
+                    fc_mean = fc_mean[np.newaxis, :]
 
-        # 3. 组装结果
-        forecasts = []
-        cursor = 0
-        for dim in instance_dims:
-            # 取出当前实例对应的 D 个 Tensor
-            # component_tensors 是 List[Tensor]，每个 shape (Q, T)
-            component_tensors = flat_forecast_tensors[cursor : cursor + dim]
-            cursor += dim
+                if fc_samples.ndim == 2:
+                    fc_samples = fc_samples[:, np.newaxis, :]
 
-            # 正确调用: 传入 Tensor 列表
-            forecasts.append(MultivariateForecast(component_tensors))
+                if gt.ndim == 1:
+                    gt = gt[np.newaxis, :]
+                elif gt.shape[0] == prediction_length and gt.shape[1] == num_variates:
+                    gt = gt.T
 
-        print(f"  Predictions generated. Merged instances: {len(forecasts)}")
+                if ctx.ndim == 1:
+                    ctx = ctx[np.newaxis, :]
+                elif ctx.shape[0] != num_variates:
+                    ctx = ctx.T
 
-        if not use_val:
+                predictions_mean[series_idx, window_idx] = fc_mean
+                predictions_samples[series_idx, window_idx] = fc_samples
+                ground_truth[series_idx, window_idx] = gt
+
+                ctx_len = min(ctx.shape[-1], max_context_len)
+                context_array[series_idx, window_idx, :, :ctx_len] = ctx[:, -ctx_len:]
+
+        if use_val:
+            print("    (No results saved - validation data used for hyperparameter selection)")
+        else:
             ds_config = f"{dataset_name}/{term}"
             model_hyperparams = {
                 "model": f"chronos-bolt-{model_size}",
                 "context_length": context_length,
+                "quantile_levels": predictor.quantile_levels,
             }
 
-            mock_predictor = MockPredictor(forecasts)
-
-            metadata = save_window_predictions(
+            metadata = save_window_quantile_predictions(
                 dataset=dataset,
-                predictor=mock_predictor,
+                predictor=predictor,
                 ds_config=ds_config,
                 output_base_dir=output_dir,
                 seasonality=season_length,
                 model_hyperparams=model_hyperparams,
             )
-
-            print(f"  Completed: {metadata['num_series']} series × {metadata['num_windows']} windows")
             print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
     print(f"\n{'='*60}")
@@ -247,32 +377,71 @@ def run_chronos_experiment(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Chronos Bolt experiments")
-    parser.add_argument("--dataset", type=str, default="IMOS/15T", help="Dataset name")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"], choices=["short", "medium", "long"], help="Terms to evaluate")
-    parser.add_argument("--model-size", type=str, default="base", choices=["tiny", "mini", "small", "base"], help="Chronos model size")
-    parser.add_argument("--output-dir", type=str, default=None, help="Output directory for results")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
-    parser.add_argument("--num-samples", type=int, default=100, help="Number of samples (ignored/broadcasted)")
-    parser.add_argument("--context-length", type=int, default=4000, help="Maximum context length")
-    parser.add_argument("--cuda-device", type=str, default="0", help="CUDA device ID")
-    parser.add_argument("--config", type=str, default=None, help="Path to datasets.yaml config file")
-    parser.add_argument("--val", action="store_true", help="Evaluate on validation data")
+    parser = argparse.ArgumentParser(description="Run Chronos-Bolt experiments")
+    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
+                        help="Dataset name(s). 'all_datasets' for all.")
+    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+                        choices=["short", "medium", "long"],
+                        help="Terms to evaluate")
+    parser.add_argument("--model-size", type=str, default="base",
+                        choices=["tiny", "mini", "small", "base"],
+                        help="Chronos-Bolt model size")
+    parser.add_argument("--output-dir", type=str, default=None,
+                        help="Output directory for results")
+    parser.add_argument("--batch-size", type=int, default=16,
+                        help="Batch size for prediction")
+    parser.add_argument(
+        "--quantiles",
+        type=float,
+        nargs="+",
+        default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+        help="Quantile levels to predict",
+    )
+    parser.add_argument("--context-length", type=int, default=4000,
+                        help="Maximum context length")
+    parser.add_argument("--cuda-device", type=str, default="0",
+                        help="CUDA device ID")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to datasets.yaml config file")
+    parser.add_argument("--val", action="store_true",
+                        help="Evaluate on validation data")
 
     args = parser.parse_args()
 
-    run_chronos_experiment(
-        dataset_name=args.dataset,
-        terms=args.terms,
-        model_size=args.model_size,
-        output_dir=args.output_dir,
-        batch_size=args.batch_size,
-        num_samples=args.num_samples,
-        context_length=args.context_length,
-        cuda_device=args.cuda_device,
-        config_path=Path(args.config) if args.config else None,
-        use_val=args.val,
-    )
+    config_path = Path(args.config) if args.config else None
+    if len(args.dataset) == 1 and args.dataset[0] == "all_datasets":
+        config = load_dataset_config(config_path)
+        datasets = list(config.get("datasets", {}).keys())
+    else:
+        datasets = args.dataset
+
+    for idx, dataset_name in enumerate(datasets, 1):
+        print(f"\n{'#'*60}")
+        print(f"# Dataset {idx}/{len(datasets)}: {dataset_name}")
+        print(f"{'#'*60}")
+
+        try:
+            run_chronos_bolt_experiment(
+                dataset_name=dataset_name,
+                terms=args.terms,
+                model_size=args.model_size,
+                output_dir=args.output_dir,
+                batch_size=args.batch_size,
+                context_length=args.context_length,
+                cuda_device=args.cuda_device,
+                config_path=config_path,
+                use_val=args.val,
+                quantile_levels=args.quantiles,
+            )
+        except Exception as e:
+            print(f"ERROR: Failed to run experiment for {dataset_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+
+    print(f"\n{'#'*60}")
+    print(f"# All datasets completed!")
+    print(f"{'#'*60}")
 
 if __name__ == "__main__":
     main()
