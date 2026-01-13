@@ -14,7 +14,7 @@ import math
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
+import pandas as pds
 import yaml
 from datasets import load_from_disk
 from timebench.evaluation.data import Dataset
