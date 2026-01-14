@@ -92,7 +92,7 @@ class MockPredictor:
 
 def _prepare_context(series, target_length):
     """
-    Crop to at most target_length (no padding).
+    Crop to at most target_length, left-pad shorter sequences with zeros.
     """
     if isinstance(series, torch.Tensor):
         series = series.detach().cpu().numpy()
@@ -100,12 +100,17 @@ def _prepare_context(series, target_length):
         series = np.asarray(series)
 
     series = series.astype(np.float32, copy=False)
-    length = series.shape[0]
 
-    if length >= target_length:
+    if series.shape[0] >= target_length:
         series = series[-target_length:]
 
     series = _impute_nans_1d(series)
+
+    if series.shape[0] < target_length:
+        pad_len = target_length - series.shape[0]
+        pad = np.zeros((pad_len,), dtype=series.dtype)
+        series = np.concatenate([pad, series], axis=0)
+
     return torch.from_numpy(series).float()
 
 

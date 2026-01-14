@@ -18,6 +18,7 @@ from pathlib import Path
 # Ensure timebench is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+import numpy as np
 from dotenv import load_dotenv
 from gluonts.time_feature import get_seasonality
 # Strict import based on your demo
@@ -39,6 +40,53 @@ class MockPredictor:
 
     def predict(self, dataset_input, **kwargs):
         return self.forecasts
+
+
+def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
+    series = series.astype(np.float32, copy=False)
+    if not np.isnan(series).any():
+        return series
+    idx = np.arange(series.shape[0])
+    mask = np.isfinite(series)
+    if mask.sum() == 0:
+        return np.nan_to_num(series, nan=0.0)
+    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
+    return series
+
+
+def _clean_nan_target(series: np.ndarray) -> np.ndarray:
+    if series.ndim == 1:
+        return _impute_nans_1d(series)
+    if series.ndim == 2:
+        cleaned = np.empty_like(series, dtype=np.float32)
+        for i in range(series.shape[0]):
+            cleaned[i] = _impute_nans_1d(series[i])
+        return cleaned
+    return np.nan_to_num(series, nan=0.0)
+
+
+def _prepare_entry(entry: dict, context_length: int | None) -> dict:
+    target = np.asarray(entry["target"], dtype=np.float32)
+    if target.ndim == 2 and target.shape[0] > target.shape[1]:
+        target = target.T
+    if context_length is not None and target.shape[-1] > context_length:
+        target = target[..., -context_length:]
+    target = _clean_nan_target(target)
+
+    cleaned = dict(entry)
+    cleaned["target"] = target
+
+    for key in ("past_feat_dynamic_real", "feat_dynamic_real"):
+        if key not in cleaned:
+            continue
+        feat = np.asarray(cleaned[key], dtype=np.float32)
+        if feat.ndim == 2 and feat.shape[0] > feat.shape[1]:
+            feat = feat.T
+        if context_length is not None and feat.shape[-1] > context_length:
+            feat = feat[..., -context_length:]
+        cleaned[key] = feat
+
+    return cleaned
 
 
 def run_moirai2_experiment(
@@ -142,7 +190,8 @@ def run_moirai2_experiment(
         season_length = get_seasonality(dataset.freq)
 
         print(f"  Running predictions...")
-        forecasts = list(predictor.predict(eval_data.input))
+        processed_inputs = [_prepare_entry(entry, context_length) for entry in eval_data.input]
+        forecasts = list(predictor.predict(processed_inputs))
 
         num_total_instances = len(forecasts)
         num_series = num_total_instances // num_windows
