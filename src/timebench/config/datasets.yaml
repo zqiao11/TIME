@@ -102,6 +102,16 @@ datasets:
       long:
         prediction_length: 144   # 3 days; 1440/144 = 10 windows
 
+  CPHL/H:
+      test_length: 672
+      val_length: 672
+      short:
+        prediction_length: 24
+      medium:
+        prediction_length: 168
+      long:
+        prediction_length: 336
+
   Coastal_T_S/5T:
       test_length: 4320  # 15 days
       val_length: 4320
@@ -133,8 +143,8 @@ datasets:
         prediction_length: 216   # 3 days; 1080/216 = 5 windows
 
   Coastal_T_S/H:
-      test_length: 720  # 15 days
-      val_length: 720
+      test_length: 672
+      val_length: 672
       short:
         prediction_length: 24
       medium:
@@ -234,6 +244,18 @@ datasets:
         prediction_length: 96    # 1 day; 2976/96 = 31 windows
       long:
         prediction_length: 672   # 1 week; floor(2976/672) = 4 windows
+
+  Port_Activity/D:
+    test_length: 365
+    val_length: 90
+    short:
+      prediction_length: 30
+
+  Port_Activity/W:
+    test_length: 52
+    val_length: 13
+    short:
+      prediction_length: 13
 
 
 ########################### Healthcare ###########################
@@ -364,3 +386,32 @@ datasets:
     short:
       prediction_length: 30
 
+
+  ########################### CloudOPS ###########################
+  azure2019_D/5T:
+    test_length: 864
+    val_length: 864
+    short:
+      prediction_length: 288
+
+  azure2019_I/5T:
+    test_length: 864
+    val_length: 864
+    short:
+      prediction_length: 288
+
+  azure2019_U/5T:
+    test_length: 288
+    val_length: 96
+    short:
+      prediction_length: 48
+
+  Smart_Manufacturing/H:
+    test_length: 336
+    val_length: 336
+    short:
+      prediction_length: 24
+    medium:
+      prediction_length: 168
+    long:
+      prediction_length: 336
