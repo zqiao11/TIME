@@ -15,19 +15,21 @@ FREQ_MIN_LENGTH = {
     # 秒级; 3 Days
     "S": 3600 * 24 * 3,
     # 分钟级; 1 Month  # TODO: 2周？
-    "T": 60 * 24 * 30,
-    "min": 60 * 24 * 30,
+    "T": 60 * 24 * 28,
+    "min": 60 * 24 * 28,
     # 小时级; 1 Month
     "H": 24 * 30,
     "h": 24 * 30,
     # 日级; 0.5 Year
     "D": 183 * 1,
+    # 工作日级; 0.5 Year (约130个工作日)
+    "B": 130,
     # 周级; 2 Year
     "W": 52 * 2,
-    # 月级; 3 Years
-    "M": 12 * 3,
-    "MS": 12 * 3,
-    "ME": 12 * 3,
+    # 月级; 10 Years
+    "M": 12 * 10,
+    "MS": 12 * 10,
+    "ME": 12 * 10,
     # 季度级; 10 Years
     "Q": 4 * 10,
     "QS": 4 * 10,
@@ -1621,11 +1623,155 @@ def main():
         )
 
         if cleaned_df is not None:
+            # === 生成 Summary（与多文件模式对齐）===
+            variate_stats = {}
+            dropped_variates = []
+            rw_variates = []
+            sp_variates = []
+
+            for col, col_result in result.items():
+                if col.startswith("_") or col == "multivariate":
+                    continue
+                is_kept = col_result.get("predictable", False)
+                is_rw = col_result.get("is_random_walk", False)
+                is_sp = col_result.get("has_spike_presence", False)
+
+                variate_stats[col] = {
+                    "total": 1,
+                    "kept": 1 if is_kept else 0,
+                    "rw": 1 if is_rw else 0,
+                    "sp": 1 if is_sp else 0
+                }
+
+                if not is_kept:
+                    dropped_variates.append(col)
+                if is_rw:
+                    rw_variates.append(col)
+                if is_sp:
+                    sp_variates.append(col)
+
+            # 构建 summary
+            variate_summary = {
+                "dataset": dataset,
+                "freq": inferred_freq,
+                "num_series": 1,
+                "success_count": 1,
+                "num_observations": result.get("_meta", {}).get("num_observations", 0),
+                "series_length": len(cleaned_df),
+                "variates": {}
+            }
+
+            for variate, stats in variate_stats.items():
+                variate_summary["variates"][variate] = {
+                    "total": stats["total"],
+                    "kept": stats["kept"],
+                    "rw": stats["rw"],
+                    "sp": stats["sp"],
+                    "kept_ratio": stats["kept"],
+                    "rw_ratio": stats["rw"],
+                    "sp_ratio": stats["sp"]
+                }
+
+            # 添加 correlation 信息到 summary
+            corr_duplicates = []
+            if "multivariate" in result:
+                corr_matrix = result["multivariate"].get("correlation_matrix", {})
+                corr_duplicates = result["multivariate"].get("correlation_duplicates", [])
+                if corr_matrix:
+                    variate_summary["correlation_matrix"] = corr_matrix
+                if corr_duplicates:
+                    variate_summary["correlation_duplicates"] = [
+                        {"var1": v1, "var2": v2, "corr": c} for v1, v2, c in corr_duplicates
+                    ]
+
+            # 保存 summary JSON
+            summary_json_path = os.path.join(json_output_dir, "_summary.json")
+            with open(summary_json_path, "w", encoding="utf-8") as f:
+                json.dump(variate_summary, f, indent=4, ensure_ascii=False)
+
+            # === 打印汇总信息（与多文件模式对齐）===
             print("\n" + "=" * 60)
             print("[PreprocessPipeline] 处理完成!")
+            print(f"  数据集: {dataset}")
+            print(f"  频率: {inferred_freq}")
+            print(f"  成功: 1/1")
+            print(f"  总行数: {len(cleaned_df)}")
+            print(f"  总列数: {len(cleaned_df.columns)}")
             print(f"  输出 CSV: {output_csv_path}")
             print(f"  输出 JSON: {output_json_path}")
+            print(f"  输出 Summary: {summary_json_path}")
             print("=" * 60)
+
+            # === 打印 Variate 汇总统计 ===
+            total_variates = len(variate_stats)
+            kept_count = sum(1 for s in variate_stats.values() if s["kept"])
+            rw_count = len(rw_variates)
+            sp_count = len(sp_variates)
+
+            print("\n" + "=" * 60)
+            print(f"[PreprocessPipeline] Variate 汇总统计 (数据集: {dataset})")
+            print("=" * 60)
+            print(f"  总 Variate 数: {total_variates}")
+            print(f"  保留: {kept_count} ({kept_count/total_variates*100:.1f}%)")
+            print(f"  建议删除: {total_variates - kept_count} ({(total_variates - kept_count)/total_variates*100:.1f}%)")
+            print(f"  Random Walk [rw]: {rw_count} ({rw_count/total_variates*100:.1f}%)")
+            print(f"  Spike Presence [sp]: {sp_count} ({sp_count/total_variates*100:.1f}%)")
+            print("=" * 60)
+
+            # === 打印 Correlation 统计 ===
+            if corr_duplicates:
+                print("\n" + "=" * 100)
+                print(f"[PreprocessPipeline] 高相关变量对统计 (|r| > 0.95)")
+                print("=" * 100)
+                print(f"{'变量对':<50} {'相关系数':>12}")
+                print("-" * 100)
+
+                for var1, var2, corr_val in corr_duplicates:
+                    pair_str = f"{var1} <-> {var2}"
+                    print(f"{pair_str:<50} {corr_val:>12.4f}")
+
+                print("=" * 100)
+                print(f"共发现 {len(corr_duplicates)} 对高相关变量")
+            else:
+                print("\n[PreprocessPipeline] ✅ 未发现高度相关的变量对 (|r| > 0.95)")
+
+            # === 决策提示 ===
+            has_decisions = dropped_variates or corr_duplicates
+
+            if has_decisions:
+                print("\n" + "=" * 60)
+                print("⚠️  [决策提示] 需要人工决策!")
+                print("=" * 60)
+
+                if dropped_variates:
+                    print("\n📌 以下 variate 建议删除:")
+                    for var in dropped_variates:
+                        print(f"   - {var}")
+                    # 生成批量删除命令
+                    base_vars = [re.sub(r'\[.*?\]', '', v) for v in dropped_variates]
+                    variates_str = ",".join(base_vars)
+                    print(f"\n   批量移除命令: python -m timebench.preprocess --remove_variate {variates_str} --target_dir {csv_output_dir}")
+                    print(f"   或一键删除所有 [drop] 标记: python -m timebench.preprocess --remove_drop_marked --target_dir {csv_output_dir}")
+
+                if corr_duplicates:
+                    print("\n📌 以下变量对高度相关，考虑移除其中一个:")
+                    for var1, var2, corr_val in corr_duplicates:
+                        base_var1 = re.sub(r'\[.*?\]', '', var1)
+                        base_var2 = re.sub(r'\[.*?\]', '', var2)
+                        print(f"   - {base_var1} <-> {base_var2}: r = {corr_val}")
+                        print(f"     移除 {base_var1}: python -m timebench.preprocess --remove_variate {base_var1} --target_dir {csv_output_dir}")
+                        print(f"     移除 {base_var2}: python -m timebench.preprocess --remove_variate {base_var2} --target_dir {csv_output_dir}")
+
+                print("\n💡 提示:")
+                if dropped_variates:
+                    print("   - 建议删除的 variate 已标记为 [drop]，可使用 --remove_drop_marked 一键删除")
+                if corr_duplicates:
+                    print("   - 如果两个变量高度相关 → 根据业务意义选择保留一个")
+                print("   - 支持逗号分隔的批量操作，如: --remove_variate VAR1,VAR2,VAR3")
+                print("   - 添加 --dry_run 可预览操作而不实际执行")
+                print("=" * 60)
+
+            print(f"\n[PreprocessPipeline] 汇总已保存至: {summary_json_path}")
 
     else:
         # === 多文件模式 ===

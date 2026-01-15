@@ -251,7 +251,7 @@ def run_moirai_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Moirai experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["ECDC_COVID/D"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets' to run all datasets from config")
     parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
                         choices=["short", "medium", "long"],

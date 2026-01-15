@@ -104,7 +104,7 @@ def get_test_window_start_timestamp(
     num_windows = dataset_obj.windows
     assert window_idx <= num_windows-1, f"window_idx must be less than or equal to num_windows-1: {window_idx} <= {num_windows-1}"
     series_length = len(full_series)
-    train_end_idx = series_length - prediction_length * num_windows  #TODO: 这么算train_end_idx不对，最后window可能ceil，不是完整的window
+    train_end_idx = series_length - test_length
 
     # Calculate current test window position
     test_window_start_idx = train_end_idx + window_idx * prediction_length

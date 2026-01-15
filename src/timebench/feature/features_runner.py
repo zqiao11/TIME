@@ -2,8 +2,8 @@
 Feature extraction runner for batch processing datasets.
 
 Usage:
-    python features_runner.py --dataset IMOS/15T --config ./config/datasets.yaml
-    python features_runner.py --all --config ./config/datasets.yaml
+    python -m timebench.feature.features_runner --dataset IMOS/15T
+    python -m timebench.feature.features_runner --all
 
 Input format:
     Expects preprocessed CSV files from preprocess.py located at:
@@ -18,6 +18,7 @@ import argparse
 import glob
 import os
 import time
+from pathlib import Path
 
 import pandas as pd
 import yaml
@@ -31,13 +32,23 @@ from timebench.feature.features import (
     tsfeatures_with_uid_freq_map,
 )
 
+# Default config path relative to this module
+# features_runner.py is at src/timebench/feature/
+# datasets.yaml is at src/timebench/config/
+DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "datasets.yaml"
+
 
 # Define the desired output column order
 FEATURE_COLUMNS_ORDER = [
-    # Meta features (from preprocess tags)
+    # Identifiers (for joining with results)
+    "dataset_id",
+    "series_name",
+    "variate_name",
     "unique_id",
+    # Meta features (from preprocess tags)
     "is_random_walk",
     "has_spike_presence",
+    "x_entropy",  # Entropy of raw series (predictability/signal-to-noise)
     # Trend features (from STL)
     "trend_strength",
     "trend_stability",
@@ -106,18 +117,24 @@ def find_dataset_config(datasets_config: dict, dataset_key: str) -> tuple[str, s
 
 def convert_multi_csv_to_panel(
     csv_dir: str,
-    split_ratios: list[float] = [0.7, 0.1, 0.2]
-) -> pd.DataFrame:
+    test_length: int | None = None,
+    mode: str = "test"
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Convert multiple CSV files from preprocess.py output to tsfeatures panel format.
 
     Args:
         csv_dir: Directory containing *.csv files
-        split_ratios: [train_ratio, val_ratio, test_ratio]
+        test_length: Number of timesteps for test portion (required if mode="test")
+        mode: Which portion to compute features on:
+            - "full": Use entire series
+            - "test": Use only the last `test_length` timesteps
 
     Returns:
-        panel_df: DataFrame with columns ['unique_id', 'ds', 'y', 'split']
+        panel_df: DataFrame with columns ['unique_id', 'ds', 'y']
                   unique_id format: "{series_name}_{variate_name}"
+        uid_info_df: DataFrame with columns ['unique_id', 'series_name', 'variate_name']
+                     for later joining with features
     """
     csv_files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
 
@@ -125,6 +142,7 @@ def convert_multi_csv_to_panel(
         raise ValueError(f"No *.csv files found in {csv_dir}")
 
     all_records = []
+    uid_info_records = []
 
     for csv_path in csv_files:
         series_name = os.path.splitext(os.path.basename(csv_path))[0]  # e.g., "item_0" or any filename
@@ -136,15 +154,12 @@ def convert_multi_csv_to_panel(
         # Ensure time is sorted
         df = df.sort_values(time_col).reset_index(drop=True)
 
-        # Compute split indices
-        n = len(df)
-        train_end = int(n * split_ratios[0])
-        val_end = train_end + int(n * split_ratios[1])
-
-        # Assign split labels
-        df['split'] = 'test'
-        df.loc[:train_end - 1, 'split'] = 'train'
-        df.loc[train_end:val_end - 1, 'split'] = 'val'
+        # Filter based on mode
+        if mode == "test":
+            if test_length is None:
+                raise ValueError("test_length must be provided when mode='test'")
+            # Keep only the last test_length rows
+            df = df.iloc[-test_length:].reset_index(drop=True)
 
         # Convert each variate to panel format
         for var in var_cols:
@@ -153,12 +168,19 @@ def convert_multi_csv_to_panel(
                 "unique_id": unique_id,
                 "ds": safe_parse_datetime(df[time_col]),
                 "y": df[var],
-                "split": df['split']
             })
             all_records.append(temp)
 
+            # Record series_name and variate_name for this unique_id
+            uid_info_records.append({
+                "unique_id": unique_id,
+                "series_name": series_name,
+                "variate_name": var,
+            })
+
     panel_df = pd.concat(all_records, ignore_index=True)
-    return panel_df
+    uid_info_df = pd.DataFrame(uid_info_records)
+    return panel_df, uid_info_df
 
 
 def compute_dataset_features(
@@ -166,7 +188,7 @@ def compute_dataset_features(
     freq: str,
     csv_dir: str,
     output_dir: str = "./output",
-    test_split: float = 0.1,
+    test_length: int | None = None,
     split_mode: str = "test",
 ) -> None:
     """
@@ -174,7 +196,7 @@ def compute_dataset_features(
 
     Pipeline:
         1. Load or generate the raw panel from the dataset CSV files.
-        2. Apply train/test splitting according to test_split ratio.
+        2. Filter data based on split_mode and test_length.
         3. Preprocess the time series (interpolation, scaling, frequency analysis).
         4. Compute statistical and STL-based time series features.
         5. Merge all features with dataset statistics.
@@ -185,20 +207,18 @@ def compute_dataset_features(
         freq: Frequency string (e.g., "H", "D", "15T").
         csv_dir: Path to directory containing processed CSV files (*.csv).
         output_dir: Base directory for output files.
-        test_split: Test set ratio (from datasets.yaml).
-        split_mode: Which split to compute features on:
+        test_length: Number of timesteps for test portion (required if split_mode="test").
+        split_mode: Which portion to compute features on:
             - "full": 完整序列
-            - "test": 只在 test split 上求（默认）
-            - "train": 只在非 test split 上求
+            - "test": 只在最后 test_length 个时间步上计算（默认）
 
     Returns:
         None. Saves features to {output_dir}/features/{dataset}/{freq}/{split_mode}.csv
     """
     start = time.time()
 
-    # Calculate split ratios: [train_ratio, 0, test_ratio] (no validation during tsfeature computation)
-    train_ratio = 1.0 - test_split
-    split_ratios = [train_ratio, 0.0, test_split]
+    # dataset_id for joining with results (format: "{dataset_name}/{freq}")
+    dataset_id = f"{dataset_name}/{freq}"
 
     # Set the directories & paths (format: {dataset}/{freq}/)
     feature_dir = os.path.join(output_dir, "features", dataset_name, freq)
@@ -212,22 +232,13 @@ def compute_dataset_features(
         return
 
     print(f"[Start] Processing {dataset_name}/{freq} ({split_mode}) from {csv_dir}")
-    print(f"        test_split={test_split}")
-
-    # Generate panel from CSV directory
-    print("Loading CSV files and converting to panel format...")
-    panel = convert_multi_csv_to_panel(csv_dir, split_ratios=split_ratios)
-    print(f"Loaded panel: {len(panel)} rows, {panel['unique_id'].nunique()} unique_ids")
-
-    # Choose the split to compute tsfeatures
     if split_mode == "test":
-        panel = panel[panel['split'] == 'test'].reset_index(drop=True)
-        print(f"Using test split only: {len(panel)} rows")
-    elif split_mode == "train":
-        panel = panel[panel['split'] != 'test'].reset_index(drop=True)
-        print(f"Using train split only: {len(panel)} rows")
-    else:  # full
-        print(f"Using full data: {len(panel)} rows")
+        print(f"        test_length={test_length}")
+
+    # Generate panel from CSV directory with appropriate filtering
+    print("Loading CSV files and converting to panel format...")
+    panel, uid_info_df = convert_multi_csv_to_panel(csv_dir, test_length=test_length, mode=split_mode)
+    print(f"Loaded panel: {len(panel)} rows, {panel['unique_id'].nunique()} unique_ids")
 
     # Interpolate, Scale, Freq_analysis
     print("Running preprocessing...")
@@ -262,15 +273,26 @@ def compute_dataset_features(
     features_df = meta_features_df.merge(stl_features_df, on='unique_id', how='left')
     features_df = features_df.merge(stats_df, on='unique_id', how='left')
 
+    # Add identifier columns (dataset_id, series_name, variate_name)
+    features_df = features_df.merge(uid_info_df, on='unique_id', how='left')
+    features_df['dataset_id'] = dataset_id
+
     # Reorder columns according to FEATURE_COLUMNS_ORDER
     ordered_cols = [col for col in FEATURE_COLUMNS_ORDER if col in features_df.columns]
     # Add any remaining columns not in the order list
     remaining_cols = [col for col in features_df.columns if col not in ordered_cols]
     features_df = features_df[ordered_cols + remaining_cols]
 
+    # Check for NaN values and remove rows with NaN (protection against STL decomposition failures)
+    nan_rows = features_df.isna().any(axis=1)
+    if nan_rows.sum() > 0:
+        nan_uids = features_df.loc[nan_rows, 'unique_id'].tolist()
+        print(f"[Warning] Removing {nan_rows.sum()} rows with NaN values: {nan_uids[:5]}{'...' if len(nan_uids) > 5 else ''}")
+        features_df = features_df.dropna()
+
     # Save all features
     features_df.to_csv(output_csv_path, index=False)
-    print(f"[Done] {dataset_name}/{freq} ({split_mode}): Saved features to {output_csv_path} (elapsed {time.time() - start:.2f}s)")
+    print(f"[Done] {dataset_name}/{freq} ({split_mode}): Saved {len(features_df)} features to {output_csv_path} (elapsed {time.time() - start:.2f}s)")
 
 
 def count_variates_in_dir(csv_dir: str) -> tuple[int, int]:
@@ -302,20 +324,19 @@ def load_datasets_config(config_path: str) -> dict:
     return config
 
 
-def get_test_split(dataset_config: dict, defaults: dict) -> float:
+def get_test_length(dataset_config: dict) -> int | None:
     """
-    获取数据集的 test_split 值，优先使用数据集特定配置，否则使用默认值
+    获取数据集的 test_length 值
 
     Args:
         dataset_config: 数据集特定配置
-        defaults: 默认配置
 
     Returns:
-        test_split 值
+        test_length 值，如果未配置则返回 None
     """
-    if dataset_config and "test_split" in dataset_config:
-        return dataset_config["test_split"]
-    return defaults.get("test_split", 0.1)
+    if dataset_config and "test_length" in dataset_config:
+        return dataset_config["test_length"]
+    return None
 
 
 def main():
@@ -325,12 +346,13 @@ def main():
         epilog="""
 Examples:
     # Process single dataset (expects data at ./data/processed_csv/IMOS/15T/*.csv)
+    # Uses test_length from config/datasets.yaml
     python -m timebench.feature.features_runner --dataset IMOS/15T
 
     # Process all datasets in config
     python -m timebench.feature.features_runner --all
 
-    # Compute features on full data instead of test split only
+    # Compute features on full series instead of last test_length timesteps
     python -m timebench.feature.features_runner --dataset IMOS/15T --split full
         """
     )
@@ -349,14 +371,14 @@ Examples:
         "--split",
         type=str,
         default="test",
-        choices=["full", "test", "train"],
-        help="Which split to compute features on: 'full' (完整序列), 'test' (只在 test split 上, 默认), 'train' (只在非 test split 上)"
+        choices=["full", "test"],
+        help="Which portion to compute features on: 'full' (完整序列), 'test' (只在最后 test_length 个时间步上, 默认)"
     )
     parser.add_argument(
         "--config",
         type=str,
-        default='./config/datasets.yaml',
-        help="Path to datasets.yaml config file"
+        default=str(DEFAULT_CONFIG_PATH),
+        help="Path to datasets.yaml config file (default: src/timebench/config/datasets.yaml)"
     )
     parser.add_argument(
         "--csv_dir",
@@ -376,7 +398,6 @@ Examples:
     # Load config
     config = load_datasets_config(args.config)
     datasets_config = config.get("datasets", {})
-    defaults = config.get("defaults", {})
 
     if not datasets_config:
         raise ValueError(f"No datasets found in config file: {args.config}")
@@ -394,15 +415,26 @@ Examples:
                 print(f"[Warning] Directory not found: {dataset_csv_dir}, skipping {dataset_key}")
                 continue
 
-            # Get test_split from config
+            # Get test_length from config
             dataset_cfg = datasets_config.get(dataset_key, {})
-            test_split = get_test_split(dataset_cfg, defaults)
+            test_length = get_test_length(dataset_cfg)
+
+            # Validate test_length when mode is "test"
+            if args.split == "test" and test_length is None:
+                print(f"[Warning] test_length not found in config for {dataset_key}, skipping")
+                continue
+
+            # If test_length < 500, use full series instead
+            effective_split_mode = args.split
+            if args.split == "test" and test_length is not None and test_length < 500:
+                print(f"[Info] test_length={test_length} < 500 for {dataset_key}, using full series instead")
+                effective_split_mode = "full"
 
             n_series, n_variates = count_variates_in_dir(dataset_csv_dir)
             summary_records.append({
                 "dataset": dataset_name,
                 "freq": freq,
-                "test_split": test_split,
+                "test_length": test_length,
                 "n_series": n_series,
                 "n_variates": n_variates
             })
@@ -412,8 +444,8 @@ Examples:
                 freq=freq,
                 csv_dir=dataset_csv_dir,
                 output_dir=args.output_dir,
-                test_split=test_split,
-                split_mode=args.split,
+                test_length=test_length,
+                split_mode=effective_split_mode,
             )
 
         # Save summary
@@ -425,7 +457,7 @@ Examples:
                 [summary_df, pd.DataFrame([{
                     "dataset": "TOTAL",
                     "freq": "-",
-                    "test_split": "-",
+                    "test_length": "-",
                     "n_series": summary_df["n_series"].sum(),
                     "n_variates": summary_df["n_variates"].sum()
                 }])],
@@ -449,16 +481,29 @@ Examples:
                 f"Run preprocess.py first to generate the data."
             )
 
-        # Get test_split from config
-        test_split = get_test_split(dataset_cfg, defaults)
+        # Get test_length from config
+        test_length = get_test_length(dataset_cfg)
+
+        # Validate test_length when mode is "test"
+        if args.split == "test" and test_length is None:
+            raise ValueError(
+                f"test_length not found in config for {dataset_key}. "
+                f"Please add test_length to the config or use --split full."
+            )
+
+        # If test_length < 500, use full series instead
+        effective_split_mode = args.split
+        if args.split == "test" and test_length is not None and test_length < 500:
+            print(f"[Info] test_length={test_length} < 500, using full series instead")
+            effective_split_mode = "full"
 
         compute_dataset_features(
             dataset_name=dataset_name,
             freq=freq,
             csv_dir=dataset_csv_dir,
             output_dir=args.output_dir,
-            test_split=test_split,
-            split_mode=args.split,
+            test_length=test_length,
+            split_mode=effective_split_mode,
         )
     else:
         parser.print_help()

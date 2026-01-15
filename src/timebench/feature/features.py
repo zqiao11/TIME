@@ -21,6 +21,8 @@ PERIODS = {
     'H': [12, 24, 168, 720],        # 12H, D, W, M
     'D': [7, 30, 91, 365],          # W, M, Q, A
     'W': [4, 13, 52],               # M, Q, A
+    'M': [12],                      # A
+    'Q': [4],                      # A
     'A': [1]
 }
 
@@ -31,6 +33,8 @@ PERIODS_MARGINS = {
     'H':   [1, 2, 12, 24],            # 1H, 2H, 12H, 1D
     'D':   [1, 3, 7, 14],             # 1D, 3D, 1W, 2W
     'W':   [1, 2, 4],                 # 1W, 2W, 1M
+    'M':   [1],                        # 1M
+    'Q':   [1],                        # 1Q
     'A':   [0]
 }
 
@@ -113,12 +117,24 @@ def safe_parse_datetime(series: pd.Series) -> pd.Series:
 def convert_to_tsfeatures_panel(
     csv_path: str,
     var_cols: List[str] = None,
-    split_ratios: List[float] = [0.7, 0.1, 0.2]
+    test_length: Optional[int] = None,
+    mode: Literal["full", "test"] = "full"
 ) -> pd.DataFrame:
     """
     Convert a CSV file to tsfeatures panel format.
 
     CSV format requirement: First column must be timestamp, other columns are values.
+
+    Args:
+        csv_path: Path to CSV file
+        var_cols: List of variable columns to include (default: all except timestamp)
+        test_length: Number of timesteps for test portion (required if mode="test")
+        mode: Which portion to compute features on:
+            - "full": Use entire series
+            - "test": Use only the last `test_length` timesteps
+
+    Returns:
+        panel_df: DataFrame with columns ['unique_id', 'ds', 'y']
     """
     df = pd.read_csv(csv_path, parse_dates=[0])
 
@@ -132,15 +148,12 @@ def convert_to_tsfeatures_panel(
     # Ensure time is sorted
     df = df.sort_values(time_col).reset_index(drop=True)
 
-    # Compute split indices
-    n = len(df)
-    train_end = int(n * split_ratios[0])
-    val_end = train_end + int(n * split_ratios[1])
-
-    # Assign split labels
-    df['split'] = 'test'
-    df.loc[:train_end - 1, 'split'] = 'train'
-    df.loc[train_end:val_end - 1, 'split'] = 'val'
+    # Filter based on mode
+    if mode == "test":
+        if test_length is None:
+            raise ValueError("test_length must be provided when mode='test'")
+        # Keep only the last test_length rows
+        df = df.iloc[-test_length:].reset_index(drop=True)
 
     # Convert to tsfeatures panel
     records = []
@@ -149,7 +162,6 @@ def convert_to_tsfeatures_panel(
             "unique_id": var,
             "ds": safe_parse_datetime(df[time_col]),
             "y": df[var],
-            "split": df['split']   # 把 split 信息保留
         })
         records.append(temp)
 
@@ -506,6 +518,10 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
     m = freq
     nperiods = int(m > 1)
 
+    # Compute entropy on raw series (before STL decomposition)
+    # This measures the predictability/signal-to-noise ratio of the original time series
+    x_entropy = entropy(x, m)['entropy']
+
     # STL fits
     if m > 1:
         try:
@@ -513,6 +529,7 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
         except:
             return {
                 'nperiods': nperiods, 'seasonal_period': m,
+                'x_entropy': x_entropy,
                 'trend_strength': np.nan, 'trend_stability': np.nan, 'trend_hurst': np.nan,
                 'e_acf1': np.nan, 'e_acf10': np.nan, 'e_entropy': np.nan,
                 'seasonal_strength': np.nan,'seasonal_corr': np.nan, 'seasonal_lumpiness': np.nan
@@ -528,6 +545,7 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
         except:
             return {
                 'nperiods': nperiods, 'seasonal_period': m,
+                'x_entropy': x_entropy,
                 'trend_strength': np.nan, 'trend_stability': np.nan, 'trend_hurst': np.nan,
                 'e_acf1': np.nan, 'e_acf10': np.nan, 'e_entropy': np.nan,
                 'seasonal_strength': np.nan,'seasonal_corr': np.nan, 'seasonal_lumpiness': np.nan
@@ -553,6 +571,7 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
     # Trend stability & hurst
     trend_stability = stability(trend0, m)['stability']
     trend_hurst = hurst(trend0, m)['hurst']
+    trend_nonlinearity = nonlinearity(trend0, m)['nonlinearity']
 
     # Seasonality stability
     try:
@@ -569,9 +588,11 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
 
     # Output
     output = {
+        'x_entropy': x_entropy,  # Entropy of raw series (predictability/signal-to-noise)
         'trend_strength': trend,
         'trend_stability': trend_stability,
         'trend_hurst': trend_hurst,
+        'trend_nonlinearity': trend_nonlinearity,
         'e_acf1': e_acf['x_acf1'],
         'e_acf10': e_acf['x_acf10'],
         'e_entropy': e_entropy,

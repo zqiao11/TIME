@@ -132,6 +132,16 @@ datasets:
       long:
         prediction_length: 216   # 3 days; 1080/216 = 5 windows
 
+  Coastal_T_S/H:
+      test_length: 720  # 15 days
+      val_length: 720
+      short:
+        prediction_length: 24
+      medium:
+        prediction_length: 168
+      long:
+        prediction_length: 336
+
   SG_Weather/D:
     test_length: 366
     val_length: 366
@@ -228,18 +238,129 @@ datasets:
 
 ########################### Healthcare ###########################
   ECDC_COVID/D:
-    test_length: 120
+    test_length: 150
     val_length: 30
     short:
-      prediction_length: 7    # 7 days; floor(120/7) = 17 windows
-    medium:
-      prediction_length: 14    # 14 days; floor(120/14) = 8 windows
-    long:
-      prediction_length: 30    # 30 days; 120/30 = 4 windows
+      prediction_length: 30
 
 
   ECDC_COVID/W:
-    test_length: 20
-    val_length: 10
+    test_length: 52
+    val_length: 13
     short:
-      prediction_length: 4    # 5 windows
+      prediction_length: 13
+
+
+  ########################### Finance ###########################
+  Crypto/D:
+    test_length: 273
+    val_length: 92
+    short:
+      prediction_length: 30
+
+  US_Term_Structure/B:
+    test_length: 717 # 2023 - 2025
+    val_length: 100  # 2022
+    short:
+      prediction_length: 20
+
+  Oil_Price/B:
+    test_length: 717  # 2023 - 2025 Sep
+    val_length: 100 # 2022
+    short:
+      prediction_length: 20
+
+ ########################### Economics ###########################
+  Job_Claims/W:
+    test_length: 52
+    val_length: 13
+    short:
+      prediction_length: 13
+
+  Uncertainty_1M/M:
+    test_length: 42
+    val_length: 18
+    short:
+      prediction_length: 6    # 1 month; 42/6 = 7 windows
+
+  Housing_Inventory/M:
+    test_length: 36
+    val_length: 12
+    short:
+      prediction_length: 12
+
+  JOLTS/M:
+      test_length: 60
+      val_length: 12
+      short:
+        prediction_length: 12
+
+  US_Labor/M:
+    test_length: 60
+    val_length: 12
+    short:
+      prediction_length: 12
+
+  Vehicle_Supply/M:
+    test_length: 60
+    val_length: 12
+    short:
+      prediction_length: 12
+
+  Auto_Production_SF/M:
+    test_length: 60
+    val_length: 12
+    short:
+      prediction_length: 12
+
+  Commodity_Production/M:
+    test_length: 60
+    val_length: 12
+    short:
+      prediction_length: 12
+
+  Commodity_Import/M:
+    test_length: 60
+    val_length: 12
+    short:
+      prediction_length: 12
+
+
+  WUI_Global/Q:
+    test_length: 20
+    val_length: 20
+    short:
+      prediction_length: 4  # 1 year; 20/4 = 5 windows
+
+  Global_Price/Q:
+    test_length: 20
+    val_length: 8
+    short:
+      prediction_length: 4
+
+
+  ########################### Sales ###########################
+  Vehicle_Sales/M:
+    test_length: 60
+    val_length: 12
+    short:
+      prediction_length: 12
+
+  Online_Retail_2_UCI/D:
+    test_length: 180
+    val_length: 90
+    short:
+      prediction_length: 30
+
+  Supply_Chain_Customer/D:
+    test_length: 365
+    val_length: 90
+    short:
+      prediction_length: 30
+
+  Supply_Chain_Location/D:
+    test_length: 365
+    val_length: 90
+    short:
+      prediction_length: 30
+
