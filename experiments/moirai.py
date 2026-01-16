@@ -11,9 +11,12 @@ Usage:
 """
 
 import argparse
+import gc
 import os
 import sys
 from pathlib import Path
+
+import torch
 
 # Ensure timebench is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -116,83 +119,106 @@ def run_moirai_experiment(
         freq_unit = freq.lstrip('0123456789')       # 去掉前面的数字: "15T" -> "T", "H" -> "H"
         patch_size = patch_size_dict[freq_unit]     # 用单位查找 patch_size
 
+        # Try multivariate first, fallback to univariate on OOM
+        for to_univariate in [False, True]:
+            mode_name = "univariate" if to_univariate else "multivariate"
 
-        # Initialize model for this term with the term's prediction_length
-        print(f"  Initializing Moirai-{model_size} model with prediction_length={prediction_length}...")
-        model = MoiraiForecast(
-            module=MoiraiModule.from_pretrained(f"Salesforce/moirai-1.0-R-{model_size}"),
-            prediction_length=prediction_length,  # From config for this term
-            context_length=context_length,
-            patch_size=patch_size,
-            num_samples=num_samples,
-            target_dim=1,  # Will be updated per dataset
-            feat_dynamic_real_dim=0,
-            past_feat_dynamic_real_dim=0,
-        )
-
-        # Load dataset with config settings
-        dataset = Dataset(
-            name=dataset_name,
-            term=term,
-            to_univariate=False,
-            prediction_length=prediction_length,
-            test_length=test_length,
-            val_length=val_length,
-        )
-
-        # Calculate actual test/val length (based on min series length)
-        if use_val:
-            data_length = val_length
-            num_windows = dataset.val_windows
-            split_name = "Val split"
-        else:
-            data_length = test_length
-            num_windows = dataset.windows
-            split_name = "Test split"
-
-        print("  Dataset info:")
-        print(f"    - Frequency: {dataset.freq}")
-        print(f"    - Num series: {len(dataset.hf_dataset)}")
-        print(f"    - Target dim: {dataset.target_dim}")
-        print(f"    - Series length: min={dataset._min_series_length}, max={dataset._max_series_length}, avg={dataset._avg_series_length:.1f}")
-        print(f"    - {split_name}: {data_length} steps)")
-        print(f"    - Prediction length: {dataset.prediction_length}")
-        print(f"    - Windows: {num_windows}")
-
-        # Configure model for this dataset
-        model.hparams.prediction_length = dataset.prediction_length
-        model.hparams.target_dim = dataset.target_dim
-        model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
-
-        predictor = model.create_predictor(batch_size=batch_size)
-        season_length = get_seasonality(dataset.freq)
-
-        # Generate predictions
-        data_type = "validation" if use_val else "test"
-        print(f"  Running predictions on {data_type} data...")
-        if use_val:
-            print("    (No results saved - validation data used for hyperparameter selection)")
-        else:
-            # Save predictions and metrics for test data
-            ds_config = f"{dataset_name}/{term}"
-
-            # Prepare model hyperparameters for metadata
-            # Note: num_samples is stored in predictions.npz, not in metadata.json
-            model_hyperparams = {
-                "patch_size": patch_size,
-                "context_length": context_length,
-            }
-
-            metadata = save_window_predictions(
-                dataset=dataset,
-                predictor=predictor,
-                ds_config=ds_config,
-                output_base_dir=output_dir,
-                seasonality=season_length,
-                model_hyperparams=model_hyperparams,
+            # Initialize model for this term with the term's prediction_length
+            print(f"  Initializing Moirai-{model_size} model ({mode_name} mode) with prediction_length={prediction_length}...")
+            model = MoiraiForecast(
+                module=MoiraiModule.from_pretrained(f"Salesforce/moirai-1.0-R-{model_size}"),
+                prediction_length=prediction_length,  # From config for this term
+                context_length=context_length,
+                patch_size=patch_size,
+                num_samples=num_samples,
+                target_dim=1,  # Will be updated per dataset
+                feat_dynamic_real_dim=0,
+                past_feat_dynamic_real_dim=0,
             )
-            print(f"  Completed: {metadata['num_series']} series × {metadata['num_windows']} windows")
-            print(f"  Output: {metadata.get('output_dir', output_dir)}")
+
+            # Load dataset with config settings
+            dataset = Dataset(
+                name=dataset_name,
+                term=term,
+                to_univariate=to_univariate,
+                prediction_length=prediction_length,
+                test_length=test_length,
+                val_length=val_length,
+            )
+
+            # Calculate actual test/val length (based on min series length)
+            if use_val:
+                data_length = val_length
+                num_windows = dataset.val_windows
+                split_name = "Val split"
+            else:
+                data_length = test_length
+                num_windows = dataset.windows
+                split_name = "Test split"
+
+            print("  Dataset info:")
+            print(f"    - Mode: {mode_name}")
+            print(f"    - Frequency: {dataset.freq}")
+            print(f"    - Num series: {len(dataset.hf_dataset)}")
+            print(f"    - Target dim: {dataset.target_dim}")
+            print(f"    - Series length: min={dataset._min_series_length}, max={dataset._max_series_length}, avg={dataset._avg_series_length:.1f}")
+            print(f"    - {split_name}: {data_length} steps)")
+            print(f"    - Prediction length: {dataset.prediction_length}")
+            print(f"    - Windows: {num_windows}")
+
+            # Configure model for this dataset
+            model.hparams.prediction_length = dataset.prediction_length
+            model.hparams.target_dim = 1 if to_univariate else dataset.target_dim
+            model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
+
+            predictor = model.create_predictor(batch_size=batch_size)
+            season_length = get_seasonality(dataset.freq)
+
+            # Generate predictions
+            data_type = "validation" if use_val else "test"
+            print(f"  Running predictions on {data_type} data...")
+
+            try:
+                if use_val:
+                    print("    (No results saved - validation data used for hyperparameter selection)")
+                else:
+                    # Save predictions and metrics for test data
+                    ds_config = f"{dataset_name}/{term}"
+
+                    # Prepare model hyperparameters for metadata
+                    # Note: num_samples is stored in predictions.npz, not in metadata.json
+                    model_hyperparams = {
+                        "patch_size": patch_size,
+                        "context_length": context_length,
+                        "mode": mode_name,
+                    }
+
+                    metadata = save_window_predictions(
+                        dataset=dataset,
+                        predictor=predictor,
+                        ds_config=ds_config,
+                        output_base_dir=output_dir,
+                        seasonality=season_length,
+                        model_hyperparams=model_hyperparams,
+                    )
+                    print(f"  Completed: {metadata['num_series']} series × {metadata['num_windows']} windows")
+                    print(f"  Output: {metadata.get('output_dir', output_dir)}")
+
+                # Success - break out of the retry loop
+                break
+
+            except torch.cuda.OutOfMemoryError:
+                if to_univariate:
+                    # Already in univariate mode, re-raise the error
+                    raise
+                else:
+                    # Multivariate failed, try univariate
+                    print("  ⚠️  CUDA OOM in multivariate mode, switching to univariate mode...")
+                    # Clean up GPU memory
+                    del model, predictor, dataset
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    continue
 
     print(f"\n{'='*60}")
     print("All experiments completed!")
