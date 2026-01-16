@@ -18,7 +18,6 @@ from pathlib import Path
 # Ensure timebench is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-import numpy as np
 from dotenv import load_dotenv
 from gluonts.time_feature import get_seasonality
 from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
@@ -29,10 +28,24 @@ from timebench.evaluation.data import (
     get_dataset_settings,
     load_dataset_config,
 )
-from timebench.evaluation.metrics import compute_per_window_metrics
 
 # Load environment variables
 load_dotenv()
+
+patch_size_dict = {"S": 64, "T": 32, "H": 32, "D": 16, "B": 16, "W": 16, "M": 8, "Q": 8, "Y": 8, "A": 8}
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
 
 
 def run_moirai_experiment(
@@ -44,15 +57,16 @@ def run_moirai_experiment(
     num_samples: int = 100,
     context_length: int = 4000,
     cuda_device: str = "0",
-        config_path: Path | None = None,
-        use_val: bool = False,
+    config_path: Path | None = None,
+    use_val: bool = False,
 ):
     """
     Run Moirai model experiments on a dataset with specified terms.
 
     Args:
         dataset_name: Dataset name (e.g., "TSBench_IMOS_v2/15T")
-        terms: List of terms to evaluate ("short", "medium", "long")
+        terms: List of terms to evaluate ("short", "medium", "long").
+               If None, auto-detect from config.
         model_size: Moirai model size ("small", "base", "large")
         output_dir: Output directory for results
         batch_size: Batch size for prediction
@@ -65,12 +79,15 @@ def run_moirai_experiment(
     # Set CUDA device
     os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
 
-        # Load dataset configuration
+    # Load dataset configuration
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
         output_dir = f"./output/results/moirai_{model_size}"
@@ -95,7 +112,10 @@ def run_moirai_experiment(
         print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
         # Moirai hyperparameter (constant across all terms)
-        patch_size = 32
+        freq = dataset_name.split("/")[1]           # 例如 "15T", "H", "5T"
+        freq_unit = freq.lstrip('0123456789')       # 去掉前面的数字: "15T" -> "T", "H" -> "H"
+        patch_size = patch_size_dict[freq_unit]     # 用单位查找 patch_size
+
 
         # Initialize model for this term with the term's prediction_length
         print(f"  Initializing Moirai-{model_size} model with prediction_length={prediction_length}...")
@@ -125,12 +145,10 @@ def run_moirai_experiment(
             data_length = val_length
             num_windows = dataset.val_windows
             split_name = "Val split"
-            eval_data = dataset.val_data
         else:
             data_length = test_length
             num_windows = dataset.windows
             split_name = "Test split"
-            eval_data = dataset.test_data
 
         print("  Dataset info:")
         print(f"    - Frequency: {dataset.freq}")
@@ -152,73 +170,6 @@ def run_moirai_experiment(
         # Generate predictions
         data_type = "validation" if use_val else "test"
         print(f"  Running predictions on {data_type} data...")
-        forecasts = list(predictor.predict(eval_data.input))
-
-        # Count number of series
-        num_total_instances = len(forecasts)
-        num_series = num_total_instances // num_windows
-        num_variates = dataset.target_dim
-        prediction_length = dataset.prediction_length
-
-        print(f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}")
-
-        # Collect ground truth labels and contexts
-        print("    Collecting ground truth and context...")
-        ground_truths = []
-        contexts = []
-        for inp, label in eval_data:
-            ground_truths.append(label["target"])
-            contexts.append(inp["target"])
-
-        # Initialize arrays
-        num_samples = forecasts[0].samples.shape[0] if len(forecasts) > 0 else 100
-
-        predictions_mean = np.zeros((num_series, num_windows, num_variates, prediction_length))
-        predictions_samples = np.zeros((num_series, num_windows, num_samples, num_variates, prediction_length))
-        ground_truth = np.zeros((num_series, num_windows, num_variates, prediction_length))
-
-        # Find max context length to pad contexts
-        max_context_len = max(ctx.shape[-1] for ctx in contexts)
-        context_array = np.full((num_series, num_windows, num_variates, max_context_len), np.nan)
-
-        print("    Organizing data into arrays...")
-        for idx, (fc, gt, ctx) in enumerate(zip(forecasts, ground_truths, contexts)):
-            series_idx = idx // num_windows
-            window_idx = idx % num_windows
-
-            # Get forecast mean and samples
-            fc_mean = fc.mean
-            fc_samples = fc.samples
-
-            # Handle univariate case (add dimension if needed)
-            if fc_mean.ndim == 1:
-                fc_mean = fc_mean[np.newaxis, :]
-            elif fc_mean.shape[0] == prediction_length and fc_mean.shape[1] == num_variates:
-                fc_mean = fc_mean.T
-
-            if fc_samples.ndim == 2:
-                fc_samples = fc_samples[:, np.newaxis, :]
-            elif fc_samples.shape[1] == prediction_length and fc_samples.shape[2] == num_variates:
-                fc_samples = fc_samples.transpose(0, 2, 1)
-
-            if gt.ndim == 1:
-                gt = gt[np.newaxis, :]
-            elif gt.shape[0] == prediction_length and gt.shape[1] == num_variates:
-                gt = gt.T
-
-            if ctx.ndim == 1:
-                ctx = ctx[np.newaxis, :]
-            elif ctx.shape[0] != num_variates:
-                ctx = ctx.T
-
-            predictions_mean[series_idx, window_idx] = fc_mean
-            predictions_samples[series_idx, window_idx] = fc_samples
-            ground_truth[series_idx, window_idx] = gt
-
-            # Store context (padded with NaN for shorter contexts)
-            ctx_len = ctx.shape[-1]
-            context_array[series_idx, window_idx, :, :ctx_len] = ctx
-
         if use_val:
             print("    (No results saved - validation data used for hyperparameter selection)")
         else:
@@ -251,12 +202,12 @@ def run_moirai_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Moirai experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["ECDC_COVID/D"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["US_Term_Structure/B"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets' to run all datasets from config")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
-    parser.add_argument("--model-size", type=str, default="small",
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
+    parser.add_argument("--model-size", type=str, default="base",
                         choices=["small", "base", "large"],
                         help="Moirai model size")
     parser.add_argument("--output-dir", type=str, default=None,
