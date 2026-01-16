@@ -34,14 +34,6 @@ from timebench.evaluation.data import (
 load_dotenv()
 
 
-class MockPredictor:
-    def __init__(self, forecasts):
-        self.forecasts = forecasts
-
-    def predict(self, dataset_input, **kwargs):
-        return self.forecasts
-
-
 def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
     series = series.astype(np.float32, copy=False)
     if not np.isnan(series).any():
@@ -89,6 +81,19 @@ def _prepare_entry(entry: dict, context_length: int | None) -> dict:
     return cleaned
 
 
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
+
 def run_moirai2_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] = None,
@@ -106,8 +111,11 @@ def run_moirai2_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
     if quantile_levels is None:
         quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
@@ -149,7 +157,7 @@ def run_moirai2_experiment(
         dataset = Dataset(
             name=dataset_name,
             term=term,
-            to_univariate=False,
+            to_univariate=True,
             prediction_length=prediction_length,
             test_length=test_length,
             val_length=val_length,
@@ -157,22 +165,20 @@ def run_moirai2_experiment(
 
         # Initialize model STRICTLY following your demo structure
         print(f"  Initializing Moirai-2.0-{model_size_used} model...")
-        
+
         model = Moirai2Forecast(
             module=module,
             prediction_length=dataset.prediction_length,
             context_length=context_length,
-            target_dim=dataset.target_dim,
+            target_dim=1,
             feat_dynamic_real_dim=0,
             past_feat_dynamic_real_dim=0,
         )
 
         if use_val:
             num_windows = dataset.val_windows
-            eval_data = dataset.val_data
         else:
             num_windows = dataset.windows
-            eval_data = dataset.test_data
 
         print("  Dataset info:")
         print(f"    - Frequency: {dataset.freq}")
@@ -181,22 +187,12 @@ def run_moirai2_experiment(
         print(f"    - Prediction length: {dataset.prediction_length}")
         print(f"    - Windows: {num_windows}")
 
-        # Configure model for this dataset
-        model.hparams.prediction_length = dataset.prediction_length
-        model.hparams.target_dim = dataset.target_dim
-        model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
-
         predictor = model.create_predictor(batch_size=batch_size)
         season_length = get_seasonality(dataset.freq)
 
         print(f"  Running predictions...")
-        processed_inputs = [_prepare_entry(entry, context_length) for entry in eval_data.input]
-        forecasts = list(predictor.predict(processed_inputs))
-
-        num_total_instances = len(forecasts)
-        num_series = num_total_instances // num_windows
-        
-        print(f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}")
+        # processed_inputs = [_prepare_entry(entry, context_length) for entry in dataset.test_data.input]
+        # forecasts = list(predictor.predict(processed_inputs))
 
         if use_val:
             print("    (No results saved - validation data used for hyperparameter selection)")
@@ -209,11 +205,9 @@ def run_moirai2_experiment(
                 "quantile_levels": quantile_levels,
             }
 
-            mock_predictor = MockPredictor(forecasts)
-
             metadata = save_window_quantile_predictions(
                 dataset=dataset,
-                predictor=mock_predictor,
+                predictor=predictor,
                 ds_config=ds_config,
                 output_base_dir=output_dir,
                 seasonality=season_length,
@@ -231,10 +225,10 @@ def run_moirai2_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Moirai-2.0 experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["Water_Quality_Darwin/15T"],
                         help="Dataset name(s)")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
-                        choices=["short", "medium", "long"], help="Terms to evaluate")
+    parser.add_argument("--terms", type=str, nargs="+", default=["medium"],
+                        choices=["short", "medium", "long"], help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base",
                         choices=["small", "base", "large"], help="Moirai model size")
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory")
