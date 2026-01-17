@@ -32,8 +32,6 @@ from timebench.evaluation.data import (
     get_dataset_settings,
     load_dataset_config,
 )
-# [Note] compute_per_window_metrics removed to match Moirai script behavior
-# from timebench.evaluation.metrics import compute_per_window_metrics
 
 # Load environment variables
 load_dotenv()
@@ -79,12 +77,6 @@ class MultivariateForecast:
             q_data = q_data[:, np.newaxis, :]
         self._quantiles = q_data
         self._quantile_levels = [float(q) for q in quantile_levels]
-        self._samples = q_data
-
-    @property
-    def samples(self): return self._samples
-    @property
-    def mean(self): return self._mean
 
     def quantile(self, q: float):
         q_levels = np.asarray(self._quantile_levels, dtype=float)
@@ -92,7 +84,7 @@ class MultivariateForecast:
         if matches.size == 0:
             raise ValueError(f"Quantile {q} not available. Supported: {self._quantile_levels}")
         return self._quantiles[int(matches[0])]
-    
+
     def cpu(self):
         return self
 
@@ -107,7 +99,20 @@ class MockPredictor:
         return self.forecasts
 
 
-def run_chronos_experiment(
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
+
+def run_chronos2_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] = None,
     model_size: str = "chronos2",
@@ -130,8 +135,12 @@ def run_chronos_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
+
     if quantile_levels is None:
         quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
@@ -179,7 +188,7 @@ def run_chronos_experiment(
             term=term,
             to_univariate=False, # Chronos 2 supports multivariate natively
             prediction_length=prediction_length,
-            test_length=test_length, 
+            test_length=test_length,
             val_length=val_length,
         )
 
@@ -212,9 +221,8 @@ def run_chronos_experiment(
         data_type = "validation" if use_val else "test"
         print(f"  Running predictions on {data_type} data (Batch size: {batch_size})...")
 
-        # A. Prepare Context List
-        context_list = []
-        for d in eval_data.input:
+        # Helper function to prepare a single context
+        def _prepare_context(d):
             target = np.asarray(d["target"])
 
             if target.ndim == 2 and target.shape[0] > target.shape[1]:
@@ -230,16 +238,19 @@ def run_chronos_experiment(
             if target.ndim == 1:
                 target = target[np.newaxis, :]
 
-            context_list.append(torch.tensor(target))
+            return torch.tensor(target)
 
-        # B. Batch Inference
+        # Batch Inference with lazy loading
         forecasts = []
+        eval_input_list = list(eval_data.input)  # Convert to list for indexing
+        total_items = len(eval_input_list)
+
         if batch_size > 0:
-            total_items = len(context_list)
             for start in range(0, total_items, batch_size):
                 end = min(start + batch_size, total_items)
-                batch_contexts = context_list[start:end]
-                
+                # Load context only for current batch
+                batch_contexts = [_prepare_context(eval_input_list[i]) for i in range(start, end)]
+
                 class ContentFilterStderr:
                     def __init__(self, original_stream):
                         self.original_stream = original_stream
@@ -263,7 +274,7 @@ def run_chronos_experiment(
                         )
                 finally:
                     sys.stderr = original_stderr
-                
+
                 # Handle return types (Tensor vs List)
                 if isinstance(batch_q, torch.Tensor):
                     if batch_q.ndim == 4 and batch_q.shape[-1] == len(quantile_levels):
@@ -288,58 +299,7 @@ def run_chronos_experiment(
 
                 # Optional progress logging to match Bolt/Moirai if needed
                 if (start // batch_size + 1) % 10 == 0:
-                     pass 
-
-        # ---------------------------------------------------------
-        # 2. Organizing Data (Matching Moirai logging structure)
-        # ---------------------------------------------------------
-        num_total_instances = len(forecasts)
-        num_series = num_total_instances // num_windows
-        num_variates = dataset.target_dim
-
-        print(f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}")
-
-        print("    Collecting ground truth and context...")
-        ground_truths = []
-        contexts = []
-        for inp, label in eval_data:
-            ground_truths.append(label["target"])
-            contexts.append(inp["target"])
-
-        # Initialize arrays
-        num_quantiles = len(quantile_levels)
-        predictions_mean = np.zeros((num_series, num_windows, num_variates, prediction_length))
-        predictions_samples = np.zeros((num_series, num_windows, num_quantiles, num_variates, prediction_length))
-        ground_truth = np.zeros((num_series, num_windows, num_variates, prediction_length))
-        
-        max_context_len = max(ctx.shape[-1] for ctx in contexts) if contexts else 0
-        context_array = np.full((num_series, num_windows, num_variates, max_context_len), np.nan)
-
-        print("    Organizing data into arrays...")
-        for idx, (fc, gt, ctx) in enumerate(zip(forecasts, ground_truths, contexts)):
-            series_idx = idx // num_windows
-            window_idx = idx % num_windows
-
-            fc_mean = fc.mean
-            fc_samples = fc.samples
-
-            if fc_mean.ndim == 1: fc_mean = fc_mean[np.newaxis, :]
-            
-            # Ensure sample dimensions match (Samples, Variates, Pred_Len)
-            if fc_samples.ndim == 2: fc_samples = fc_samples[:, np.newaxis, :]
-            
-            if gt.ndim == 1: gt = gt[np.newaxis, :]
-            if gt.shape[0] == prediction_length and gt.shape[1] == num_variates: gt = gt.T
-            
-            if ctx.ndim == 1: ctx = ctx[np.newaxis, :]
-            elif ctx.shape[0] != num_variates: ctx = ctx.T
-
-            predictions_mean[series_idx, window_idx] = fc_mean
-            predictions_samples[series_idx, window_idx] = fc_samples
-            ground_truth[series_idx, window_idx] = gt
-            
-            ctx_len = ctx.shape[-1]
-            context_array[series_idx, window_idx, :, :ctx_len] = ctx
+                     pass
 
         # ---------------------------------------------------------
         # 3. Saving Results
@@ -349,7 +309,7 @@ def run_chronos_experiment(
         else:
             ds_config = f"{dataset_name}/{term}"
             model_hyperparams = {
-                "model": f"chronos-{model_size}",
+                "model": f"chronos2-{model_size}",
                 "context_length": context_length,
                 "quantile_levels": quantile_levels,
             }
@@ -364,7 +324,7 @@ def run_chronos_experiment(
                 seasonality=season_length,
                 model_hyperparams=model_hyperparams,
             )
-            
+
             print(f"  Completed: {metadata['num_series']} series × {metadata['num_windows']} windows")
             print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
@@ -376,11 +336,11 @@ def run_chronos_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Chronos experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["TSBench_IMOS_v2/15T"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets'")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="chronos2",
                         help="Chronos model size (use 'chronos2' for amazon/chronos-2)")
     parser.add_argument("--output-dir", type=str, default=None,
@@ -426,7 +386,7 @@ def main():
         print(f"{'#'*60}")
 
         try:
-            run_chronos_experiment(
+            run_chronos2_experiment(
                 dataset_name=dataset_name,
                 terms=args.terms,
                 model_size=args.model_size,

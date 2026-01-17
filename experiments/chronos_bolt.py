@@ -22,7 +22,6 @@ import numpy as np
 import torch
 from dotenv import load_dotenv
 from gluonts.time_feature import get_seasonality
-from transformers import logging as hf_logging
 
 # Chronos Import
 from chronos import BaseChronosPipeline
@@ -83,17 +82,6 @@ class MultivariateForecast:
         self._quantiles = q_data
         self._quantile_levels = [float(q) for q in quantile_levels]
 
-        self._samples = q_data
-        self._mean = np.mean(self._samples, axis=0)
-
-    @property
-    def samples(self):
-        return self._samples
-
-    @property
-    def mean(self):
-        return self._mean
-
     def quantile(self, q: float):
         q_levels = np.asarray(self._quantile_levels, dtype=float)
         matches = np.where(np.isclose(q_levels, q, atol=1e-6))[0]
@@ -110,9 +98,9 @@ class ChronosBoltPredictor:
     Wrapper to make Chronos-Bolt behave like a GluonTS Predictor.
     """
     def __init__(
-        self, 
-        pipeline: BaseChronosPipeline, 
-        prediction_length: int, 
+        self,
+        pipeline: BaseChronosPipeline,
+        prediction_length: int,
         quantile_levels: list[float],
         batch_size: int = 32,
         context_length: int = 512
@@ -204,13 +192,25 @@ class ChronosBoltPredictor:
         return quantiles
 
 
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
 def run_chronos_bolt_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] = None,
     model_size: str = "base",
     output_dir: str | None = None,
     batch_size: int = 32,
-    context_length: int = 512, 
+    context_length: int = 512,
     cuda_device: str = "0",
     config_path: Path | None = None,
     use_val: bool = False,
@@ -220,8 +220,11 @@ def run_chronos_bolt_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
     if quantile_levels is None:
         quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
@@ -239,7 +242,7 @@ def run_chronos_bolt_experiment(
 
     model_name = f"amazon/chronos-bolt-{model_size}"
     print(f"Loading Chronos-Bolt model: {model_name}...")
-    
+
     device_map = "cuda" if torch.cuda.is_available() else "cpu"
     pipeline = BaseChronosPipeline.from_pretrained(
         model_name,
@@ -256,7 +259,8 @@ def run_chronos_bolt_experiment(
 
         print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
-        to_univariate = True
+        # Chronos-Bolt only supports univariate forecasting
+        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
         dataset = Dataset(
             name=dataset_name,
             term=term,
@@ -287,70 +291,7 @@ def run_chronos_bolt_experiment(
             batch_size=batch_size,
             context_length=context_length
         )
-        
         season_length = get_seasonality(dataset.freq)
-
-        print(f"  Running predictions...")
-        forecasts = list(predictor.predict(eval_data.input))
-
-        num_total_instances = len(forecasts)
-        num_series = num_total_instances // num_windows
-        num_variates = dataset.target_dim
-
-        print(f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}")
-        print("    Collecting ground truth and context...")
-        
-        ground_truths = []
-        contexts = []
-        for inp, label in eval_data:
-            ground_truths.append(label["target"])
-            contexts.append(inp["target"])
-
-        if not to_univariate:
-            actual_num_samples = (
-                forecasts[0].samples.shape[0]
-                if len(forecasts) > 0
-                else len(predictor.quantile_levels)
-            )
-
-            predictions_mean = np.zeros((num_series, num_windows, num_variates, prediction_length))
-            predictions_samples = np.zeros((num_series, num_windows, actual_num_samples, num_variates, prediction_length))
-            ground_truth = np.zeros((num_series, num_windows, num_variates, prediction_length))
-
-            max_context_len = max(ctx.shape[-1] for ctx in contexts)
-            max_context_len = min(max_context_len, context_length * 2)
-            context_array = np.full((num_series, num_windows, num_variates, max_context_len), np.nan)
-
-            print("    Organizing data into arrays...")
-            for idx, (fc, gt, ctx) in enumerate(zip(forecasts, ground_truths, contexts)):
-                series_idx = idx // num_windows
-                window_idx = idx % num_windows
-
-                fc_mean = fc.mean
-                fc_samples = fc.samples
-
-                if fc_mean.ndim == 1:
-                    fc_mean = fc_mean[np.newaxis, :]
-
-                if fc_samples.ndim == 2:
-                    fc_samples = fc_samples[:, np.newaxis, :]
-
-                if gt.ndim == 1:
-                    gt = gt[np.newaxis, :]
-                elif gt.shape[0] == prediction_length and gt.shape[1] == num_variates:
-                    gt = gt.T
-
-                if ctx.ndim == 1:
-                    ctx = ctx[np.newaxis, :]
-                elif ctx.shape[0] != num_variates:
-                    ctx = ctx.T
-
-                predictions_mean[series_idx, window_idx] = fc_mean
-                predictions_samples[series_idx, window_idx] = fc_samples
-                ground_truth[series_idx, window_idx] = gt
-
-                ctx_len = min(ctx.shape[-1], max_context_len)
-                context_array[series_idx, window_idx, :, :ctx_len] = ctx[:, -ctx_len:]
 
         if use_val:
             print("    (No results saved - validation data used for hyperparameter selection)")
@@ -382,9 +323,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run Chronos-Bolt experiments")
     parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s). 'all_datasets' for all.")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base",
                         choices=["tiny", "mini", "small", "base"],
                         help="Chronos-Bolt model size")
