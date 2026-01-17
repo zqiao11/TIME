@@ -54,7 +54,7 @@ class TimesFMForecast:
     """
     Wrap TimesFM quantile outputs to match TimeBench Forecast interface.
     """
-    def __init__(self, quantiles, mean, quantile_levels: list[float]):
+    def __init__(self, quantiles, quantile_levels: list[float]):
         q_data = np.asarray(quantiles, dtype=np.float32)
         if q_data.ndim == 2:
             if q_data.shape[0] != len(quantile_levels) and q_data.shape[1] == len(quantile_levels):
@@ -65,19 +65,6 @@ class TimesFMForecast:
 
         self._quantiles = q_data
         self._quantile_levels = [float(q) for q in quantile_levels]
-        self._samples = q_data
-        mean_arr = np.asarray(mean)
-        if mean_arr.ndim == 1:
-            mean_arr = mean_arr[np.newaxis, :]
-        self._mean = mean_arr
-
-    @property
-    def samples(self):
-        return self._samples
-
-    @property
-    def mean(self):
-        return self._mean
 
     def quantile(self, q: float):
         q_levels = np.asarray(self._quantile_levels, dtype=float)
@@ -99,6 +86,19 @@ class MockPredictor:
 
     def predict(self, dataset_input, **kwargs):
         return self.forecasts
+
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
 
 
 def run_timesfm_experiment(
@@ -126,8 +126,11 @@ def run_timesfm_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if quantile_levels is None:
         quantile_levels = DEFAULT_QUANTILE_LEVELS
@@ -155,8 +158,8 @@ def run_timesfm_experiment(
         model_id,
         torch_compile=True,
     )
-    
-    # Move internal model to device manually if needed, 
+
+    # Move internal model to device manually if needed,
     # though from_pretrained usually handles loading.
     # Note: TimesFM `forecast` method handles device placement logic internally based on backend.
 
@@ -186,11 +189,14 @@ def run_timesfm_experiment(
             )
         )
 
+        # Initialize the dataset
+        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
+
         # Load dataset with config settings
         dataset = Dataset(
             name=dataset_name,
             term=term,
-            to_univariate=True, # TimesFM is univariate
+            to_univariate=to_univariate, # TimesFM is univariate
             prediction_length=prediction_length,
             test_length=test_length,
             val_length=val_length,
@@ -219,59 +225,47 @@ def run_timesfm_experiment(
 
         # Prepare Data for Batch Prediction
         print(f"  Preparing input batches from {split_name} data...")
-        
+
         # eval_data is an iterable of dictionaries. We need to batch inputs for TimesFM.
         # Each item has 'target' (history) and 'label' (ground truth).
         all_inputs = []
         all_ground_truths = []
-        all_contexts = []
-        
+
         for inp, label in eval_data:
             # TimesFM expects 1D numpy arrays for univariate
-            # Ensure input is 1D
             history = inp["target"]
-            if history.ndim > 1:
-                history = history.squeeze()
-            if context_length is not None and history.shape[0] > context_length:
-                history = history[-context_length:]
-            history = _impute_nans_1d(np.asarray(history))
-            
+            # if context_length is not None and history.shape[0] > context_length:
+            #     history = history[-context_length:]
+            # history = _impute_nans_1d(np.asarray(history))
+
             all_inputs.append(history)
             all_ground_truths.append(label["target"])
-            all_contexts.append(inp["target"])
 
         num_total_instances = len(all_inputs)
         print(f"    Total instances to forecast: {num_total_instances}")
 
         # Initialize Results Lists
-        fc_means = []
         fc_quantiles = []
 
         # Run Batch Prediction
         print(f"  Running predictions (Batch size: {batch_size})...")
-        
+
         for i in range(0, num_total_instances, batch_size):
             batch_inputs = all_inputs[i : i + batch_size]
-            
+
             # TimesFM forecast
-            # inputs: list of numpy arrays
-            # horizon: int
             point_forecast, quantile_forecast = model.forecast(
                 horizon=prediction_length,
                 inputs=batch_inputs,
             )
-            
-            # point_forecast: (batch, horizon)
+
             # quantile_forecast: (batch, horizon, 10) -> mean, 10th...90th
-            
-            fc_means.append(point_forecast)
             fc_quantiles.append(quantile_forecast)
-            
+
             if (i + batch_size) % (batch_size * 10) == 0:
                 print(f"    Processed {i + batch_size}/{num_total_instances}...")
 
         # Concatenate results
-        full_means = np.concatenate(fc_means, axis=0) # (Total, Horizon)
         full_quantiles = np.concatenate(fc_quantiles, axis=0) # (Total, Horizon, 10)
 
         forecasts = []
@@ -281,7 +275,6 @@ def run_timesfm_experiment(
             forecasts.append(
                 TimesFMForecast(
                     q_only.T,
-                    full_means[idx],
                     quantile_levels=quantile_levels,
                 )
             )
@@ -322,9 +315,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run TimesFM experiments")
     parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s). 'all_datasets' for all.")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base",
                         choices=["base"],
                         help="TimesFM model size")
@@ -332,8 +325,8 @@ def main():
                         help="Output directory for results")
     parser.add_argument("--batch-size", type=int, default=32,
                         help="Batch size for prediction")
-    parser.add_argument("--context-length", type=int, default=4000,
-                        help="Maximum context length (TimesFM default 1024/512)")
+    parser.add_argument("--context-length", type=int, default=4096,
+                        help="Maximum context length; 15360 is the max for TimesFM-2.5-200M")
     parser.add_argument(
         "--quantiles",
         type=float,
