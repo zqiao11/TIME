@@ -153,11 +153,14 @@ def run_moirai2_experiment(
 
         print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
+        # Moirai2 only supports univariate forecasting
+        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
+
         # Load dataset first to get dimensions
         dataset = Dataset(
             name=dataset_name,
             term=term,
-            to_univariate=True,
+            to_univariate=to_univariate,
             prediction_length=prediction_length,
             test_length=test_length,
             val_length=val_length,
@@ -225,9 +228,9 @@ def run_moirai2_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Moirai-2.0 experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["Water_Quality_Darwin/15T"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["ECDC_COVID/D"],
                         help="Dataset name(s)")
-    parser.add_argument("--terms", type=str, nargs="+", default=["medium"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"], help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base",
                         choices=["small", "base", "large"], help="Moirai model size")
