@@ -55,7 +55,7 @@ import numpy as np
 DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
 
-def compute_per_window_metrics(
+def compute_per_window_metrics_from_samples(
     predictions_samples: np.ndarray,
     ground_truth: np.ndarray,
     context: np.ndarray,

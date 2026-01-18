@@ -9,11 +9,11 @@ This module provides functionality to:
 Based on GIFT-Eval framework.
 """
 
-from timebench.evaluation.metrics import compute_per_window_metrics
+from timebench.evaluation.metrics import compute_per_window_metrics_from_quantiles
 from timebench.evaluation.saver import save_window_predictions
 
 __all__ = [
-    "compute_per_window_metrics",
+    "compute_per_window_metrics_from_quantiles",
     "save_window_predictions",
 ]
 

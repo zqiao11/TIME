@@ -588,11 +588,14 @@ class PreprocessPipeline:
 
         # 使用 inferred_freq 补全缺失的时间戳
         if self.inferred_freq is not None and len(ts) > 1:
+            # 获取用于 date_range 的频率字符串
+            freq_for_range = self._get_freq_for_date_range(ts.index)
+
             # 创建完整的时间范围
             full_range = pd.date_range(
                 start=ts.index.min(),
                 end=ts.index.max(),
-                freq=self.inferred_freq
+                freq=freq_for_range
             )
 
             # 检查是否有缺失的时间戳
@@ -606,6 +609,39 @@ class PreprocessPipeline:
                 return ts, True, f"filled_{missing_count}_missing_timestamps"
 
         return ts, True, "ok"
+
+    def _get_freq_for_date_range(self, index: pd.DatetimeIndex) -> str:
+        """
+        根据数据的实际日期获取正确的 date_range 频率字符串
+
+        主要处理周频率的情况：pandas 的 'W' 默认是周日，
+        但数据可能使用其他日期作为周起始日（如 ISO 标准的周一）
+
+        Returns:
+            str: 用于 pd.date_range 的频率字符串
+        """
+        freq = self.inferred_freq
+
+        # 处理周频率：检测实际的周起始日
+        if freq and freq.upper().startswith('W'):
+            if len(index) > 0:
+                # 获取数据中最常见的星期几
+                weekdays = index.dayofweek  # 0=Monday, 6=Sunday
+                most_common_weekday = weekdays.value_counts().idxmax()
+
+                # 映射到 pandas 的周频率格式
+                weekday_map = {
+                    0: 'W-MON',  # Monday
+                    1: 'W-TUE',  # Tuesday
+                    2: 'W-WED',  # Wednesday
+                    3: 'W-THU',  # Thursday
+                    4: 'W-FRI',  # Friday
+                    5: 'W-SAT',  # Saturday
+                    6: 'W-SUN',  # Sunday (default 'W')
+                }
+                return weekday_map.get(most_common_weekday, 'W')
+
+        return freq
 
     def _check_constant(self, ts):
         topk = 5

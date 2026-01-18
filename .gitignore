@@ -101,3 +101,5 @@ plot_analyze/
 debug.py
 *.txt
 lightning_logs/
+timesfm/
+hf_models/
