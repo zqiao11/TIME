@@ -53,6 +53,7 @@ FEATURE_COLUMNS_ORDER = [
     "trend_strength",
     "trend_stability",
     "trend_hurst",
+    "trend_nonlinearity",
     # Seasonal features (from STL) - before residual features
     "seasonal_strength",
     "seasonal_corr",
@@ -284,11 +285,24 @@ def compute_dataset_features(
     features_df = features_df[ordered_cols + remaining_cols]
 
     # Check for NaN values and remove rows with NaN (protection against STL decomposition failures)
-    nan_rows = features_df.isna().any(axis=1)
+    # Exclude period2/3 and p_strength2/3 which are legitimately NaN for some frequencies
+    exclude_cols = ['period2', 'period3', 'p_strength2', 'p_strength3']
+    check_cols = [c for c in features_df.columns if c not in exclude_cols and c != 'unique_id']
+
+    nan_rows = features_df[check_cols].isna().any(axis=1)
     if nan_rows.sum() > 0:
         nan_uids = features_df.loc[nan_rows, 'unique_id'].tolist()
-        print(f"[Warning] Removing {nan_rows.sum()} rows with NaN values: {nan_uids[:5]}{'...' if len(nan_uids) > 5 else ''}")
-        features_df = features_df.dropna()
+        # Find which features have NaN for each row
+        nan_features = features_df.loc[nan_rows, check_cols].apply(
+            lambda row: [c for c in check_cols if pd.isna(row[c])], axis=1
+        )
+        # Get unique NaN features across all rows
+        all_nan_features = set()
+        for feats in nan_features:
+            all_nan_features.update(feats)
+        print(f"[Warning] Removing {nan_rows.sum()} rows with NaN values: {nan_uids[:10]}{'...' if len(nan_uids) > 5 else ''}")
+        print(f"          NaN features: {sorted(all_nan_features)}")
+        features_df = features_df[~nan_rows]
 
     # Save all features
     features_df.to_csv(output_csv_path, index=False)
