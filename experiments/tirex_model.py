@@ -192,13 +192,26 @@ def _resolve_quantile_levels(num_quantiles, quantile_levels):
     return [float(q) for q in quantile_levels]
 
 
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
 def run_tirex_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] | None = None,
     model_id: str = "NX-AI/TiRex",
     output_dir: str | None = None,
     batch_size: int = 128,
-    context_length: int = 4000, 
+    context_length: int = 4000,
     cuda_device: str = "0",
     config_path: Path | None = None,
     use_val: bool = False,
@@ -210,8 +223,11 @@ def run_tirex_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
     if quantile_levels is None:
         quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
@@ -248,7 +264,7 @@ def run_tirex_experiment(
         )
 
         # TiRex is a univariate model.
-        to_univariate = True
+        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
         dataset = Dataset(
             name=dataset_name,
             term=term,
@@ -293,7 +309,7 @@ def run_tirex_experiment(
             f"  Running predictions on {'validation' if use_val else 'test'} data..."
         )
         forecasts = []
-        
+
         # 1. Collect all series and Pre-process (Pad/Crop)
         flat_contexts = []
         for entry in eval_data.input:
@@ -302,18 +318,18 @@ def run_tirex_experiment(
                 series = target
             else:
                 series = target.squeeze()
-            
-            # Use strict context length for consistency 
+
+            # Use strict context length for consistency
             series = _prepare_context(series, context_length)
             flat_contexts.append(series)
 
         # 2. Batch Inference
         total_items = len(flat_contexts)
-        
+
         for start in range(0, total_items, batch_size):
             end = min(start + batch_size, total_items)
             batch = flat_contexts[start:end]
-            
+
             batch_tensor = torch.tensor(np.stack(batch), dtype=torch.float32, device=device)
 
             with torch.no_grad():
@@ -343,11 +359,11 @@ def run_tirex_experiment(
                         mean=mean_series,
                     )
                 )
-            
+
             if start % (batch_size * 5) == 0:
                 sys.stdout.write(f"\r    Processed {end}/{total_items} items...")
                 sys.stdout.flush()
-        
+
         print(f"\r    Processed {total_items}/{total_items} items. Done.")
 
         num_total_instances = len(forecasts)
@@ -360,16 +376,7 @@ def run_tirex_experiment(
 
         if use_val:
             print("    [Validation] Organizing data and computing metrics manually...")
-            
-            ground_truths = []
-            contexts = []
-            for inp, label in eval_data:
-                ground_truths.append(label["target"])
-                contexts.append(inp["target"])
-            
-            # Metric calculation omitted for batch run cleanliness, similar to Moirai structure
-            print("    (No results saved - validation mode)")
-            
+
         else:
             ds_config = f"{dataset_name}/{term}"
             model_hyperparams = {
@@ -402,19 +409,19 @@ def run_tirex_experiment(
 def main():
     parser = argparse.ArgumentParser(description="Run TiRex experiments")
     parser.add_argument(
-        "--dataset", 
-        type=str, 
-        nargs="+", 
-        default=["IMOS/15T"], 
+        "--dataset",
+        type=str,
+        nargs="+",
+        default=["IMOS/15T"],
         help="Dataset name(s)"
     )
     parser.add_argument(
         "--terms",
         type=str,
         nargs="+",
-        default=["short", "medium", "long"],
+        default=None,
         choices=["short", "medium", "long"],
-        help="Terms to evaluate",
+        help="Terms to evaluate. If not specified, auto-detect from config.",
     )
     parser.add_argument(
         "--model-id",
@@ -443,7 +450,7 @@ def main():
         help="Quantile levels to predict",
     )
     parser.add_argument(
-        "--context-length", type=int, default=4000, help="Maximum context length"
+        "--context-length", type=int, default=2048, help="Maximum context length"
     )
     parser.add_argument("--cuda-device", type=str, default="0", help="CUDA device ID")
     parser.add_argument(
@@ -495,7 +502,7 @@ def main():
             print(f"ERROR: Failed to run experiment for {dataset_name}: {e}")
             traceback.print_exc()
             continue
-            
+
     print(f"\n{'#'*60}")
     print(f"# All {total_datasets} dataset(s) completed!")
     print(f"{'#'*60}")

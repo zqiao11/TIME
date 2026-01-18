@@ -65,21 +65,33 @@ def _clean_nan_target(series: np.ndarray) -> np.ndarray:
     return np.nan_to_num(series, nan=0.0)
 
 
-def _prepare_context(series, target_length):
+def _prepare_context(series, target_length, pad_value=float('nan')):
     """
-    Ensure series is exactly target_length for batching.
-    - If longer, crop to the last `target_length` points (standard context window).
-    - If shorter, keep original length (no padding).
+    Pads or truncates a series on the left to a specified target_length.
+
+    Args:
+        series: The input sequence (tensor, list, or np.ndarray).
+        target_length (int): The target length.
+        pad_value (float): The value to use for padding, defaults to NaN.
+
+    Returns:
+        torch.Tensor: A tensor of length target_length.
     """
     if isinstance(series, torch.Tensor):
         series_t = series.float()
     else:
         series_t = torch.tensor(series, dtype=torch.float32)
 
-    if series_t.shape[-1] >= target_length:
-        return series_t[..., -target_length:]
+    current_length = series_t.shape[-1]
 
-    return series_t
+    if current_length < target_length:
+        # Pad on the left
+        padding_size = target_length - current_length
+        # F.pad format: (left, right) for 1D, applied to last dimension
+        return torch.nn.functional.pad(series_t, (padding_size, 0), mode='constant', value=pad_value)
+    else:
+        # Truncate to the last target_length elements
+        return series_t[..., -target_length:]
 
 
 def _normalize_quantile_output(quantiles: np.ndarray, prediction_length: int) -> np.ndarray:
@@ -157,6 +169,19 @@ class MockPredictor:
         return self.forecasts
 
 
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
 def run_kairos_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] | None = None,
@@ -175,8 +200,11 @@ def run_kairos_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
         model_slug = model_id.split("/")[-1]
@@ -210,7 +238,7 @@ def run_kairos_experiment(
 
         print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
-        to_univariate = True
+        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
         dataset = Dataset(
             name=dataset_name,
             term=term,
@@ -349,9 +377,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run Kairos experiments")
     parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s). 'all_datasets' for all.")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base",
                         choices=["small", "base", "large", "10m", "23m", "50m"],
                         help="Kairos model size (maps to HF ID)")

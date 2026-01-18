@@ -61,7 +61,7 @@ def _clean_nan_target(series: np.ndarray) -> np.ndarray:
 class SundialForecast:
     """Wrapper to make Sundial output compatible with TimeBench/GluonTS evaluation"""
     def __init__(self, samples):
-        # samples shape: (num_samples, target_dim, prediction_length) 
+        # samples shape: (num_samples, target_dim, prediction_length)
         # or (num_samples, prediction_length) if univariate
         self._samples = samples
         self._mean = np.mean(samples, axis=0)
@@ -104,8 +104,20 @@ def _prepare_context(series, target_length):
     pad_len = target_length - series_t.shape[-1]
     pad = torch.zeros((*series_t.shape[:-1], pad_len), dtype=series_t.dtype)
     return torch.cat([pad, series_t], dim=-1)
-    
 
+
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
 
 def run_sundial_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
@@ -114,7 +126,7 @@ def run_sundial_experiment(
     output_dir: str | None = None,
     batch_size: int = 16,
     num_samples: int = 100,  # Default aligned to 100 to prevent broadcasting errors in saver
-    context_length: int = 4000, # UPDATED: Default to 4000 to match Moirai
+    context_length: int = 2880,
     cuda_device: str = "0",
     config_path: Path | None = None,
     use_val: bool = False,
@@ -130,8 +142,11 @@ def run_sundial_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
         model_slug = model_id.split('/')[-1]
@@ -144,11 +159,11 @@ def run_sundial_experiment(
     print(f"Terms: {terms}")
     print(f"Evaluation on: {'Validation data (no saving)' if use_val else 'Test data'}")
     print(f"{'='*60}")
-    
+
     # Initialize Model
     print(f"  Initializing Sundial model ({model_id})...")
     model = AutoModelForCausalLM.from_pretrained(
-        model_id, 
+        model_id,
         trust_remote_code=True
     ).to(device)
     model.eval()
@@ -165,7 +180,7 @@ def run_sundial_experiment(
         print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
         # Sundial uses univariate inputs.
-        to_univariate = True
+        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
         dataset = Dataset(
             name=dataset_name,
             term=term,
@@ -201,12 +216,12 @@ def run_sundial_experiment(
         # Generate predictions
         data_type = "validation" if use_val else "test"
         print(f"  Running predictions on {data_type} data...")
-        
+
         forecasts = []
-        
+
         # Prepare input batches
-        all_inputs = [] 
-        
+        all_inputs = []
+
         print("    Preparing input batches...")
         for i, item in enumerate(eval_data.input):
             target = item["target"]
@@ -222,29 +237,29 @@ def run_sundial_experiment(
         # Batched Inference
         total_items = len(all_inputs)
         raw_predictions = []
-        
+
         steps = range(0, total_items, batch_size)
-        
+
         with torch.no_grad():
             for idx, start in enumerate(steps):
                 end = min(start + batch_size, total_items)
                 batch_seqs = torch.stack(all_inputs[start:end]).to(device)
-                
+
                 # Model Inference
                 # Pass num_samples here as required by Sundial
                 batch_out = model.generate(
-                    batch_seqs, 
-                    max_new_tokens=prediction_length, 
-                    num_samples=num_samples 
+                    batch_seqs,
+                    max_new_tokens=prediction_length,
+                    num_samples=num_samples
                 )
-                
+
                 # Output handling: Sundial usually returns tensor or tuple
                 if isinstance(batch_out, tuple):
                     batch_out = batch_out[0]
-                
+
                 # Ensure output is on CPU numpy
                 raw_predictions.append(batch_out.cpu().numpy())
-                
+
                 if idx % 10 == 0:
                     sys.stdout.write(f"\r    Processed {end}/{total_items} items...")
                     sys.stdout.flush()
@@ -252,29 +267,33 @@ def run_sundial_experiment(
 
         # Reconstruct Forecast Objects
         # Combine all batches
-        flat_preds = np.concatenate(raw_predictions, axis=0) 
-        
-        if to_univariate:
-            for pred in flat_preds:
-                forecasts.append(SundialForecast(pred))
-        else:
-            current_idx = 0
-            vars_per_instance = dataset.target_dim
-            num_instances = len(eval_data.input)
+        flat_preds = np.concatenate(raw_predictions, axis=0)
 
-            for _ in range(num_instances):
-                instance_chunk = flat_preds[current_idx : current_idx + vars_per_instance]
-                current_idx += vars_per_instance
 
-                # Format: (samples, prediction_length, variates) if multivariate
-                if vars_per_instance == 1:
-                    # Chunk shape: (1, num_samples, pred_len) -> (num_samples, pred_len)
-                    final_pred = instance_chunk[0]
-                else:
-                    # Chunk shape: (vars, num_samples, pred_len) -> (num_samples, pred_len, vars)
-                    final_pred = np.transpose(instance_chunk, (1, 2, 0))
+        for pred in flat_preds:
+            forecasts.append(SundialForecast(pred))
 
-                forecasts.append(SundialForecast(final_pred))
+        # if to_univariate:
+        #     for pred in flat_preds:
+        #         forecasts.append(SundialForecast(pred))
+        # else:
+        #     current_idx = 0
+        #     vars_per_instance = dataset.target_dim
+        #     num_instances = len(eval_data.input)
+
+        #     for _ in range(num_instances):
+        #         instance_chunk = flat_preds[current_idx : current_idx + vars_per_instance]
+        #         current_idx += vars_per_instance
+
+        #         # Format: (samples, prediction_length, variates) if multivariate
+        #         if vars_per_instance == 1:
+        #             # Chunk shape: (1, num_samples, pred_len) -> (num_samples, pred_len)
+        #             final_pred = instance_chunk[0]
+        #         else:
+        #             # Chunk shape: (vars, num_samples, pred_len) -> (num_samples, pred_len, vars)
+        #             final_pred = np.transpose(instance_chunk, (1, 2, 0))
+
+        #         forecasts.append(SundialForecast(final_pred))
 
         num_total_instances = len(forecasts)
         num_series = num_total_instances // num_windows
@@ -316,9 +335,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run Sundial experiments")
     parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s)")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base",
                         choices=["base"],
                         help="Sundial model size (maps to HF ID)")
@@ -328,13 +347,13 @@ def main():
                         help="Output directory for results")
     parser.add_argument("--batch-size", type=int, default=16,
                         help="Batch size for prediction")
-    
+
     # IMPORTANT: Default set to 100 to match TimeBench/Moirai defaults
-    parser.add_argument("--num-samples", type=int, default=100, 
+    parser.add_argument("--num-samples", type=int, default=100,
                         help="Number of samples for probabilistic forecasting")
-    
+
     # UPDATED: Default set to 4000 to match Moirai
-    parser.add_argument("--context-length", type=int, default=4000,
+    parser.add_argument("--context-length", type=int, default=2880,
                         help="Maximum context length (lookback)")
     parser.add_argument("--cuda-device", type=str, default="0",
                         help="CUDA device ID")

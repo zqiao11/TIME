@@ -215,13 +215,26 @@ class MockPredictor:
         return self.forecasts
 
 
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
 def run_tabpfn_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] | None = None,
     model_size: str = "base",
     output_dir: str | None = None,
     batch_size: int = 64,
-    context_length: int | None = 4000,
+    context_length: int | None = 4096,
     num_samples: int = 100,
     cuda_device: str = "0",
     config_path: Path | None = None,
@@ -232,8 +245,11 @@ def run_tabpfn_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
         output_dir = "./output/results/tabpfn"
@@ -433,9 +449,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run TabPFN-TS experiments")
     parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets'")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base",
                         choices=["base"],
                         help="TabPFN-TS model size")
@@ -443,7 +459,7 @@ def main():
                         help="Output directory for results")
     parser.add_argument("--batch-size", type=int, default=512,
                         help="Batch size (number of univariate series per batch)")
-    parser.add_argument("--context-length", type=int, default=4000,
+    parser.add_argument("--context-length", type=int, default=4096,
                         help="Maximum context length")
     parser.add_argument("--num-samples", type=int, default=100,
                         help="Number of samples for probabilistic forecasting")

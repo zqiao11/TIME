@@ -36,6 +36,19 @@ from timebench.evaluation.data import (
 # Load environment variables
 load_dotenv()
 
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
 def run_moirai_moe_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] = None,
@@ -58,8 +71,11 @@ def run_moirai_moe_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
         output_dir = f"./output/results/moirai_moe_{model_size}"
@@ -244,9 +260,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run Moirai-MoE experiments")
     parser.add_argument("--dataset", type=str, nargs="+", default=["TSBench_IMOS_v2/15T"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets'")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="small",
                         choices=["small", "base"],
                         help="Moirai-MoE model size")

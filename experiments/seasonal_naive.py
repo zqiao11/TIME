@@ -31,7 +31,6 @@ from timebench.evaluation.data import (
     get_dataset_settings,
     load_dataset_config,
 )
-from timebench.evaluation.metrics import compute_per_window_metrics
 from timebench.models import SeasonalNaivePredictor
 
 # Load environment variables
@@ -42,6 +41,7 @@ load_dotenv()
 # These are more meaningful seasonal periods for forecasting
 CUSTOM_SEASONALITY = {
     "D": 7,      # Daily → weekly seasonality (7 days)
+    "B": 5,      # Business days → weekly seasonality (5 business days)
     "W": 52,     # Weekly → yearly seasonality (52 weeks)
     "M": 12,     # Monthly → yearly seasonality (12 months)
     "Q": 4,      # Quarterly → yearly seasonality (4 quarters)
@@ -86,6 +86,20 @@ def get_effective_seasonality(freq: str) -> int:
     return season_length
 
 
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
+
 def run_seasonal_naive_experiment(
     dataset_name: str = "SG_Weather/D",
     terms: list[str] = None,
@@ -109,8 +123,11 @@ def run_seasonal_naive_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
         output_dir = "./output/results/seasonal_naive"
@@ -249,17 +266,6 @@ def run_seasonal_naive_experiment(
         if use_val:
             # For validation: just compute and print metrics
             print("    Computing metrics...")
-            metrics = compute_per_window_metrics(
-                predictions_samples=predictions_samples,
-                ground_truth=ground_truth,
-                context=context_array,
-                seasonality=season_length,
-            )
-            print("    Metrics summary (averaged over all series/windows/variates):")
-            for metric_name, metric_values in metrics.items():
-                mean_val = np.nanmean(metric_values)
-                print(f"      {metric_name}: {mean_val:.4f}")
-            print("    (No results saved - validation data used for hyperparameter selection)")
         else:
             # For test: save predictions and metrics
             ds_config = f"{dataset_name}/{term}"
@@ -290,9 +296,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run Seasonal Naive baseline experiments")
     parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets' to run all datasets from config")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Output directory for results")
     parser.add_argument("--num-samples", type=int, default=100,

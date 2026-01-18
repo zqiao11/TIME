@@ -215,6 +215,19 @@ class MockPredictor:
         return self.forecasts
 
 
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
 def run_toto_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] | None = None,
@@ -237,8 +250,11 @@ def run_toto_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
         output_dir = "./output/results/toto"
@@ -312,8 +328,6 @@ def run_toto_experiment(
         with torch.no_grad():
             for idx, item in enumerate(eval_data.input, 1):
                 target = np.asarray(item["target"])
-                if target.ndim == 2 and target.shape[0] > target.shape[1]:
-                    target = target.T
                 target = _prepare_series(target, context_length)
                 target = _clean_nan_target(target)
 
@@ -335,6 +349,10 @@ def run_toto_experiment(
                 samples = _coerce_num_samples(samples, 100)
 
                 forecasts.append(TotoForecast(samples))
+
+                # Clear GPU cache to reduce memory fragmentation
+                if device == "cuda":
+                    torch.cuda.empty_cache()
 
                 if idx % 100 == 0:
                     print(f"    Processed {idx} windows")
@@ -371,9 +389,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run Toto experiments")
     parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s). 'all_datasets' for all.")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default=None,
                         choices=["base"],
                         help="Model size alias (maps to a model id)")
@@ -385,7 +403,7 @@ def main():
                         help="Number of samples for probabilistic forecasting")
     parser.add_argument("--samples-per-batch", type=int, default=100,
                         help="Samples per batch (controls memory during inference)")
-    parser.add_argument("--context-length", type=int, default=4000,
+    parser.add_argument("--context-length", type=int, default=4096,
                         help="Maximum context length")
     parser.add_argument("--cuda-device", type=str, default="0",
                         help="CUDA device ID")

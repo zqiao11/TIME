@@ -140,6 +140,19 @@ class MockPredictor:
     def predict(self, *args, **kwargs): return self.forecasts
 
 
+
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
 def run_visiontspp_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] = None,
@@ -166,8 +179,11 @@ def run_visiontspp_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     quantile_levels, reorder_indices = _prepare_quantile_levels(quantile_levels)
 
@@ -185,7 +201,7 @@ def run_visiontspp_experiment(
 
     # --- Initialize VisionTS++ Model ---
     print(f"  Preparing VisionTS++ model...")
-    
+
     # Define paths
     local_dir = "./hf_models/VisionTSpp"
     if model_size == "base":
@@ -194,7 +210,7 @@ def run_visiontspp_experiment(
     else: # large
         arch = 'mae_large'
         ckpt_filename = "visiontspp_large.ckpt"
-    
+
     ckpt_path = os.path.join(local_dir, ckpt_filename)
 
     # Download if missing
@@ -234,7 +250,7 @@ def run_visiontspp_experiment(
         dataset = Dataset(
             name=dataset_name,
             term=term,
-            to_univariate=False, 
+            to_univariate=False,
             prediction_length=prediction_length,
             test_length=test_length,
             val_length=val_length,
@@ -260,7 +276,7 @@ def run_visiontspp_experiment(
         periodicity_list = freq_to_seasonality_list(dataset.freq)
         periodicity = periodicity_list[0]
         print(f"    - Derived Periodicity: {periodicity}")
-   
+
         # --- Prediction Logic ---
         data_type = "validation" if use_val else "test"
         print(f"  Running predictions on {data_type} data...")
@@ -283,7 +299,7 @@ def run_visiontspp_experiment(
             target = _clean_nan_target(target)
             if target.ndim == 1:
                 target = target[np.newaxis, :] # [1, T]
-            
+
             target_t = target.T # [T, V]
             context_list.append(torch.tensor(target_t).float())
 
@@ -297,16 +313,16 @@ def run_visiontspp_experiment(
             # input_tensor: [Batch, Time, Vars]
             curr_ctx_len = input_tensor.shape[1]
             nvars_input = input_tensor.shape[2]
-            
+
             model.update_config(
-                context_len=curr_ctx_len, 
-                pred_len=prediction_length, 
+                context_len=curr_ctx_len,
+                pred_len=prediction_length,
                 periodicity=periodicity,
-                num_patch_input=7, 
+                num_patch_input=7,
                 padding_mode='constant'
             )
             color_list = [i % 3 for i in range(nvars_input)]
-            
+
             with torch.no_grad():
                 output = model(input_tensor, export_image=False, color_list=color_list)
             return output
@@ -395,7 +411,7 @@ def run_visiontspp_experiment(
                     print(f"    Processed {i + 1}/{len(context_list)}", end="\r")
             print("")
 
-        
+
         # Count number of series
         num_total_instances = len(forecasts)
         num_series = num_total_instances // num_windows
@@ -403,7 +419,7 @@ def run_visiontspp_experiment(
 
         if use_val:
             # Validation logic (manual) - simplified
-            pass 
+            pass
         else:
             # Save predictions and metrics for test data
             ds_config = f"{dataset_name}/{term}"
@@ -425,7 +441,7 @@ def run_visiontspp_experiment(
                 model_hyperparams=model_hyperparams,
                 quantile_levels=quantile_levels,
             )
-            
+
             print(f"  Completed: {metadata['num_series']} series × {metadata['num_windows']} windows")
             print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
@@ -438,7 +454,7 @@ def run_visiontspp_experiment(
 def main():
     parser = argparse.ArgumentParser(description="Run VisionTS++ experiments")
     parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"], help="Dataset name(s)")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"], choices=["short", "medium", "long"], help="Terms")
+    parser.add_argument("--terms", type=str, nargs="+", default=None, choices=["short", "medium", "long"], help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base", choices=["base", "large"], help="Model size")
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
