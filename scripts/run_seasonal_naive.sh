@@ -1,0 +1,1 @@
+python experiments/seasonal_naive.py --dataset "all_datasets"
