@@ -272,6 +272,12 @@ datasets:
     short:
       prediction_length: 13
 
+  Global_Influenza/W:
+    test_length: 52
+    val_length: 13
+    short:
+      prediction_length: 13
+
 
   ########################### Finance ###########################
   Crypto/D:
@@ -415,3 +421,13 @@ datasets:
       prediction_length: 168
     long:
       prediction_length: 336
+
+  MetroPT-3/5T:
+    test_length: 1728
+    val_length: 1728
+    short:
+      prediction_length: 48
+    medium:
+      prediction_length: 288
+    long:
+      prediction_length: 576
