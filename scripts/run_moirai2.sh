@@ -62,6 +62,7 @@ python experiments/moirai2.py --dataset "Port_Activity/W"
 ########################### Healthcare ###########################
 python experiments/moirai2.py --dataset "ECDC_COVID/D"
 python experiments/moirai2.py --dataset "ECDC_COVID/W"
+python experiments/moirai2.py --dataset "Global_Influenza/W"
 
 ########################### Finance ###########################
 python experiments/moirai2.py --dataset "Crypto/D"
@@ -94,3 +95,4 @@ python experiments/moirai2.py --dataset "azure2019_U/5T"
 
 ########################### Industry ###########################
 python experiments/moirai2.py --dataset "Smart_Manufacturing/H"
+python experiments/moirai2.py --dataset "MetroPT-3/5T"

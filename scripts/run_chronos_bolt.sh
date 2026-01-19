@@ -62,6 +62,7 @@ python experiments/chronos_bolt.py --dataset "Port_Activity/W"
 ########################### Healthcare ###########################
 python experiments/chronos_bolt.py --dataset "ECDC_COVID/D"
 python experiments/chronos_bolt.py --dataset "ECDC_COVID/W"
+python experiments/chronos_bolt.py --dataset "Global_Influenza/W"
 
 ########################### Finance ###########################
 python experiments/chronos_bolt.py --dataset "Crypto/D"
@@ -94,3 +95,4 @@ python experiments/chronos_bolt.py --dataset "azure2019_U/5T"
 
 ########################## Industry ###########################
 python experiments/chronos_bolt.py --dataset "Smart_Manufacturing/H"
+python experiments/chronos_bolt.py --dataset "MetroPT-3/5T"

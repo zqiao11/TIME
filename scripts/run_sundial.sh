@@ -62,6 +62,7 @@ python experiments/sundial.py --dataset "Port_Activity/W"
 ########################### Healthcare ###########################
 python experiments/sundial.py --dataset "ECDC_COVID/D"
 python experiments/sundial.py --dataset "ECDC_COVID/W"
+python experiments/sundial.py --dataset "Global_Influenza/W"
 
 ########################### Finance ###########################
 python experiments/sundial.py --dataset "Crypto/D"
@@ -94,3 +95,4 @@ python experiments/sundial.py --dataset "azure2019_U/5T"
 
 ########################### Industry ###########################
 python experiments/sundial.py --dataset "Smart_Manufacturing/H"
+python experiments/sundial.py --dataset "MetroPT-3/5T"

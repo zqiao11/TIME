@@ -29,68 +29,71 @@ setup_conda_env() {
 
 setup_conda_env
 
-########################### Nature ###########################
-python experiments/moirai.py --dataset "Water_Quality_Darwin/15T"
-python experiments/moirai.py --dataset "current_velocity/5T"
-python experiments/moirai.py --dataset "current_velocity/10T"
-python experiments/moirai.py --dataset "current_velocity/15T"
-python experiments/moirai.py --dataset "current_velocity/20T"
-python experiments/moirai.py --dataset "current_velocity/H"
-python experiments/moirai.py --dataset "CPHL/15T"
-python experiments/moirai.py --dataset "CPHL/30T"
-python experiments/moirai.py --dataset "CPHL/H"
-python experiments/moirai.py --dataset "Coastal_T_S/5T"
-python experiments/moirai.py --dataset "Coastal_T_S/15T"
-python experiments/moirai.py --dataset "Coastal_T_S/20T"
-python experiments/moirai.py --dataset "Coastal_T_S/H"
-python experiments/moirai.py --dataset "SG_Weather/D"
-python experiments/moirai.py --dataset "SG_PM25/H"
-python experiments/moirai.py --dataset "NE_China_Wind/H"
+# ########################### Nature ###########################
+# python experiments/moirai.py --dataset "Water_Quality_Darwin/15T"
+# python experiments/moirai.py --dataset "current_velocity/5T"
+# python experiments/moirai.py --dataset "current_velocity/10T"
+# python experiments/moirai.py --dataset "current_velocity/15T"
+# python experiments/moirai.py --dataset "current_velocity/20T"
+# python experiments/moirai.py --dataset "current_velocity/H"
+# python experiments/moirai.py --dataset "CPHL/15T"
+# python experiments/moirai.py --dataset "CPHL/30T"
+# python experiments/moirai.py --dataset "CPHL/H"
+# python experiments/moirai.py --dataset "Coastal_T_S/5T"
+# python experiments/moirai.py --dataset "Coastal_T_S/15T"
+# python experiments/moirai.py --dataset "Coastal_T_S/20T"
+# python experiments/moirai.py --dataset "Coastal_T_S/H"
+# python experiments/moirai.py --dataset "SG_Weather/D"
+# python experiments/moirai.py --dataset "SG_PM25/H"
+# python experiments/moirai.py --dataset "NE_China_Wind/H"
 
-########################### Energy ###########################
-python experiments/moirai.py --dataset "Australia_Solar/H"
-python experiments/moirai.py --dataset "epf_electricity_price/H"
-python experiments/moirai.py --dataset "OpenElectricity_NEM/5T"
-python experiments/moirai.py --dataset "EWELD_Load/15T"
+# ########################### Energy ###########################
+# python experiments/moirai.py --dataset "Australia_Solar/H"
+# python experiments/moirai.py --dataset "epf_electricity_price/H"
+# python experiments/moirai.py --dataset "OpenElectricity_NEM/5T"
+# python experiments/moirai.py --dataset "EWELD_Load/15T"
 
-########################### Transportation ###########################
-python experiments/moirai.py --dataset "SG_Carpark/15T"
-python experiments/moirai.py --dataset "Finland_Traffic/15T"
-python experiments/moirai.py --dataset "Port_Activity/D"
-python experiments/moirai.py --dataset "Port_Activity/W"
+# ########################### Transportation ###########################
+# python experiments/moirai.py --dataset "SG_Carpark/15T"
+# python experiments/moirai.py --dataset "Finland_Traffic/15T"
+# python experiments/moirai.py --dataset "Port_Activity/D"
+# python experiments/moirai.py --dataset "Port_Activity/W"
 
-########################### Healthcare ###########################
-python experiments/moirai.py --dataset "ECDC_COVID/D"
-python experiments/moirai.py --dataset "ECDC_COVID/W"
+# ########################### Healthcare ###########################
+# python experiments/moirai.py --dataset "ECDC_COVID/D"
+# python experiments/moirai.py --dataset "ECDC_COVID/W"
+# python experiments/moirai.py --dataset "Global_Influenza/W"
 
-########################### Finance ###########################
-python experiments/moirai.py --dataset "Crypto/D"
-python experiments/moirai.py --dataset "US_Term_Structure/B"
-python experiments/moirai.py --dataset "Oil_Price/B"
+# ########################### Finance ###########################
+# python experiments/moirai.py --dataset "Crypto/D"
+# python experiments/moirai.py --dataset "US_Term_Structure/B"
+# python experiments/moirai.py --dataset "Oil_Price/B"
 
-########################### Economics ###########################
-python experiments/moirai.py --dataset "Job_Claims/W"
-python experiments/moirai.py --dataset "Uncertainty_1M/M"
-python experiments/moirai.py --dataset "Housing_Inventory/M"
-python experiments/moirai.py --dataset "JOLTS/M"
-python experiments/moirai.py --dataset "US_Labor/M"
-python experiments/moirai.py --dataset "Vehicle_Supply/M"
-python experiments/moirai.py --dataset "Auto_Production_SF/M"
-python experiments/moirai.py --dataset "Commodity_Production/M"
-python experiments/moirai.py --dataset "Commodity_Import/M"
-python experiments/moirai.py --dataset "WUI_Global/Q"
-python experiments/moirai.py --dataset "Global_Price/Q"
+# ########################### Economics ###########################
+# python experiments/moirai.py --dataset "Job_Claims/W"
+# python experiments/moirai.py --dataset "Uncertainty_1M/M"
+# python experiments/moirai.py --dataset "Housing_Inventory/M"
+# python experiments/moirai.py --dataset "JOLTS/M"
+# python experiments/moirai.py --dataset "US_Labor/M"
+# python experiments/moirai.py --dataset "Vehicle_Supply/M"
+# python experiments/moirai.py --dataset "Auto_Production_SF/M"
+# python experiments/moirai.py --dataset "Commodity_Production/M"
+# python experiments/moirai.py --dataset "Commodity_Import/M"
+# python experiments/moirai.py --dataset "WUI_Global/Q"
+# python experiments/moirai.py --dataset "Global_Price/Q"
 
-########################### Sales ###########################
-python experiments/moirai.py --dataset "Vehicle_Sales/M"
-python experiments/moirai.py --dataset "Online_Retail_2_UCI/D"
-python experiments/moirai.py --dataset "Supply_Chain_Customer/D"
-python experiments/moirai.py --dataset "Supply_Chain_Location/D"
+# ########################### Sales ###########################
+# python experiments/moirai.py --dataset "Vehicle_Sales/M"
+# python experiments/moirai.py --dataset "Online_Retail_2_UCI/D"
+# python experiments/moirai.py --dataset "Supply_Chain_Customer/D"
+# python experiments/moirai.py --dataset "Supply_Chain_Location/D"
 
-########################### CloudOPS ###########################
-python experiments/moirai.py --dataset "azure2019_D/5T"
-python experiments/moirai.py --dataset "azure2019_I/5T"
-python experiments/moirai.py --dataset "azure2019_U/5T"
+# ########################### CloudOPS ###########################
+# python experiments/moirai.py --dataset "azure2019_D/5T"
+# python experiments/moirai.py --dataset "azure2019_I/5T"
+# python experiments/moirai.py --dataset "azure2019_U/5T"
 
-########################### Industry ###########################
-python experiments/moirai.py --dataset "Smart_Manufacturing/H"
+# ########################### Industry ###########################
+# python experiments/moirai.py --dataset "Smart_Manufacturing/H"
+python experiments/moirai.py --dataset "MetroPT-3/5T"
+python experiments/moirai.py --dataset "Global_Influenza/W"

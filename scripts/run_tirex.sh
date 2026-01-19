@@ -65,6 +65,7 @@ python experiments/tirex_model.py --dataset "Port_Activity/W"
 ########################### Healthcare ###########################
 python experiments/tirex_model.py --dataset "ECDC_COVID/D"
 python experiments/tirex_model.py --dataset "ECDC_COVID/W"
+python experiments/tirex_model.py --dataset "Global_Influenza/W"
 
 ########################### Finance ###########################
 python experiments/tirex_model.py --dataset "Crypto/D"
@@ -97,3 +98,4 @@ python experiments/tirex_model.py --dataset "azure2019_U/5T"
 
 ########################### Industry ###########################
 python experiments/tirex_model.py --dataset "Smart_Manufacturing/H"
+python experiments/tirex_model.py --dataset "MetroPT-3/5T"

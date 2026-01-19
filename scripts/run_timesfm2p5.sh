@@ -79,6 +79,7 @@ python experiments/timesfm2.5.py --dataset "Port_Activity/W"
 ########################### Healthcare ###########################
 python experiments/timesfm2.5.py --dataset "ECDC_COVID/D"
 python experiments/timesfm2.5.py --dataset "ECDC_COVID/W"
+python experiments/timesfm2.5.py --dataset "Global_Influenza/W"
 
 ########################### Finance ###########################
 python experiments/timesfm2.5.py --dataset "Crypto/D"
@@ -111,3 +112,4 @@ python experiments/timesfm2.5.py --dataset "azure2019_U/5T"
 
 ########################### Industry ###########################
 python experiments/timesfm2.5.py --dataset "Smart_Manufacturing/H"
+python experiments/timesfm2.5.py --dataset "MetroPT-3/5T"
