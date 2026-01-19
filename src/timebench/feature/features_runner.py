@@ -54,14 +54,20 @@ FEATURE_COLUMNS_ORDER = [
     "trend_stability",
     "trend_hurst",
     "trend_nonlinearity",
+    "linearity",
+    "curvature",
     # Seasonal features (from STL) - before residual features
     "seasonal_strength",
     "seasonal_corr",
     "seasonal_lumpiness",
+    "seasonal_entropy",
     # Residual features (from STL)
     "e_acf1",
     "e_acf10",
     "e_entropy",
+    "e_kurtosis",
+    "e_shapiro_w",
+    "spike",
     # Statistics (from preprocessing)
     "mean",
     "std",
@@ -373,7 +379,7 @@ Examples:
     parser.add_argument(
         "--dataset",
         type=str,
-        default=None,
+        default="Oil_Price/B",
         help="Dataset key in format '{name}/{freq}' (e.g., 'IMOS/15T')"
     )
     parser.add_argument(

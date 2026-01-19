@@ -7,6 +7,8 @@ import pandas as pd
 from numba import njit
 from statsmodels.tsa.stattools import adfuller
 from tsfeatures import *
+from scipy.stats import kurtosis
+from scipy.stats import shapiro
 
 warnings.filterwarnings("ignore")
 
@@ -39,17 +41,6 @@ PERIODS_MARGINS = {
     'Q':   [1],                        # 1Q
     'A':   [0]
 }
-
-KEY_FEATURES = [
-    'trend_strength',
-    'trend_hurst',
-    'trend_stability',
-    'seasonal_strength',
-    'seasonality_corr',
-    'seasonal_lumpiness',
-    'e_acf1',
-    'e_entropy',
-]
 
 
 
@@ -368,10 +359,24 @@ def _acf_lags(x: np.ndarray, max_lag: int = 10):
     return acfs[0], np.sum(acfs ** 2)
 
 def fast_acf_features(x: np.ndarray, freq: int = 1) -> Dict[str, float]:
-    acf1, acf10 = _acf_lags(x)
+    """
+    Calculates ACF features using the accelerated helper function.
+    Now includes diff1_acf features.
+    """
+    # 1. 原始序列的 ACF 特征
+    x_acf1, x_acf10 = _acf_lags(x, max_lag=10)
+
+    # 2. 一阶差分序列的 ACF 特征 (diff1_acf1)
+    # 计算差分序列: x[t] - x[t-1]
+    diff1_x = np.diff(x)
+    diff1_acf1, diff1_acf10 = _acf_lags(diff1_x, max_lag=10)
+
+
     return {
-        'x_acf1': acf1,
-        'x_acf10': acf10
+        'x_acf1': x_acf1,
+        'x_acf10': x_acf10,
+        'diff1_acf1': diff1_acf1,   # 新增：差分后的一阶自相关
+        'diff1_acf10': diff1_acf10  # 顺带新增：差分后的自相关平方和
     }
 
 
@@ -516,26 +521,119 @@ def spike_presence(x: np.array, freq: int = 1) -> Dict[str, float]:
 outlier_presence = spike_presence
 
 
+# def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
+#     m = freq
+#     nperiods = int(m > 1)
+
+#     # Compute entropy on raw series (before STL decomposition)
+#     # This measures the predictability/signal-to-noise ratio of the original time series
+#     x_entropy = entropy(x, m)['entropy']
+
+#     # STL fits
+#     if m > 1:
+#         try:
+#             stlfit = STL(x, m, 13).fit()
+#         except:
+#             return {
+#                 'nperiods': nperiods, 'seasonal_period': m,
+#                 'x_entropy': x_entropy,
+#                 'trend_strength': np.nan, 'trend_stability': np.nan, 'trend_hurst': np.nan,
+#                 'e_acf1': np.nan, 'e_acf10': np.nan, 'e_entropy': np.nan,
+#                 'seasonal_strength': np.nan,'seasonal_corr': np.nan, 'seasonal_lumpiness': np.nan
+#             }
+#         trend0 = stlfit.trend
+#         remainder = stlfit.resid
+#         seasonal = stlfit.seasonal
+#     else:
+#         deseas = x
+#         t = np.arange(len(x)) + 1
+#         try:
+#             trend0 = SuperSmoother().fit(t, deseas).predict(t)
+#         except:
+#             return {
+#                 'nperiods': nperiods, 'seasonal_period': m,
+#                 'x_entropy': x_entropy,
+#                 'trend_strength': np.nan, 'trend_stability': np.nan, 'trend_hurst': np.nan,
+#                 'e_acf1': np.nan, 'e_acf10': np.nan, 'e_entropy': np.nan,
+#                 'seasonal_strength': np.nan,'seasonal_corr': np.nan, 'seasonal_lumpiness': np.nan
+#             }
+#         remainder = deseas - trend0
+#         seasonal = np.zeros(len(x))
+
+#     # Decomposition stats
+#     detrend = x - trend0
+#     deseason = x - seasonal
+#     varx = np.nanvar(x, ddof=1)
+#     vare = np.nanvar(remainder, ddof=1)
+#     vardeseason = np.nanvar(deseason, ddof=1)
+#     trend = 0 if varx < 1e-10 or vardeseason / varx < 1e-10 else max(0, min(1, 1 - vare / vardeseason))
+
+#     if m > 1:
+#         season = 0 if varx < 1e-10 or np.nanvar(remainder + seasonal, ddof=1) < 1e-10 else max(0, min(1, 1 - vare / np.nanvar(remainder + seasonal, ddof=1)))
+
+#     # E ACF features & Entropy
+#     e_acf = fast_acf_features(remainder)
+#     e_entropy = entropy(remainder, m)['entropy']
+#     e_arch_lm = arch_stat(remainder, m)['ARCH.LM']
+
+#     # Trend stability & hurst
+#     trend_stability = stability(trend0, m)['stability']
+#     trend_hurst = hurst(trend0, m)['hurst']
+#     trend_nonlinearity = nonlinearity(trend0, m)['nonlinearity']
+
+#     # Seasonality stability
+#     try:
+#         S = seasonal[:len(seasonal) // m * m]
+#         segments = S.reshape(-1, m)
+#         corrs = [np.corrcoef(segments[i], segments[j])[0, 1]
+#                  for i in range(len(segments)) for j in range(i + 1, len(segments))]
+#         seasonal_corr = np.mean(corrs) if corrs else np.nan
+#     except:
+#         seasonal_corr = np.nan
+
+#     # Seasonal stability/lumpiness
+#     seasonal_lumpiness = lumpiness(seasonal, m)['lumpiness']
+
+#     # Output
+#     output = {
+#         'x_entropy': x_entropy,  # Entropy of raw series (predictability/signal-to-noise)
+#         'trend_strength': trend,
+#         'trend_stability': trend_stability,
+#         'trend_hurst': trend_hurst,
+#         'trend_nonlinearity': trend_nonlinearity,
+#         'e_acf1': e_acf['x_acf1'],
+#         'e_diff1_acf1': e_acf['diff1_acf1'],
+#         'e_acf10': e_acf['x_acf10'],
+#         'e_entropy': e_entropy,
+#         'e_arch_lm': e_arch_lm,
+#     }
+
+#     if m > 1:
+#         output['seasonal_strength'] = season
+#         output['seasonal_corr'] = seasonal_corr
+#         output['seasonal_lumpiness'] = seasonal_lumpiness
+
+#     return output
+
+
 def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
+    """
+    Calculates extended seasonal trend features, including entropy, stability,
+    linearity, curvature, and spike.
+    """
     m = freq
+    n = len(x) # 需要明确定义序列长度 n
     nperiods = int(m > 1)
 
-    # Compute entropy on raw series (before STL decomposition)
-    # This measures the predictability/signal-to-noise ratio of the original time series
+    # Compute entropy on raw series
     x_entropy = entropy(x, m)['entropy']
 
-    # STL fits
+    # --- STL fits ---
     if m > 1:
         try:
             stlfit = STL(x, m, 13).fit()
         except:
-            return {
-                'nperiods': nperiods, 'seasonal_period': m,
-                'x_entropy': x_entropy,
-                'trend_strength': np.nan, 'trend_stability': np.nan, 'trend_hurst': np.nan,
-                'e_acf1': np.nan, 'e_acf10': np.nan, 'e_entropy': np.nan,
-                'seasonal_strength': np.nan,'seasonal_corr': np.nan, 'seasonal_lumpiness': np.nan
-            }
+            return _get_empty_output(nperiods, m, x_entropy) # 封装了原本的 nan 返回逻辑
         trend0 = stlfit.trend
         remainder = stlfit.resid
         seasonal = stlfit.seasonal
@@ -545,64 +643,102 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
         try:
             trend0 = SuperSmoother().fit(t, deseas).predict(t)
         except:
-            return {
-                'nperiods': nperiods, 'seasonal_period': m,
-                'x_entropy': x_entropy,
-                'trend_strength': np.nan, 'trend_stability': np.nan, 'trend_hurst': np.nan,
-                'e_acf1': np.nan, 'e_acf10': np.nan, 'e_entropy': np.nan,
-                'seasonal_strength': np.nan,'seasonal_corr': np.nan, 'seasonal_lumpiness': np.nan
-            }
+            return _get_empty_output(nperiods, m, x_entropy)
         remainder = deseas - trend0
         seasonal = np.zeros(len(x))
 
-    # Decomposition stats
+    # --- Decomposition stats ---
     detrend = x - trend0
     deseason = x - seasonal
     varx = np.nanvar(x, ddof=1)
     vare = np.nanvar(remainder, ddof=1)
     vardeseason = np.nanvar(deseason, ddof=1)
-    trend = 0 if varx < 1e-10 or vardeseason / varx < 1e-10 else max(0, min(1, 1 - vare / vardeseason))
 
+    # Trend strength
+    if varx < 1e-10 or vardeseason / varx < 1e-10:
+        trend = 0
+    else:
+        trend = max(0, min(1, 1 - vare / vardeseason))
+
+    # Seasonal strength
     if m > 1:
-        season = 0 if varx < 1e-10 or np.nanvar(remainder + seasonal, ddof=1) < 1e-10 else max(0, min(1, 1 - vare / np.nanvar(remainder + seasonal, ddof=1)))
+        if varx < 1e-10 or np.nanvar(remainder + seasonal, ddof=1) < 1e-10:
+            season = 0
+        else:
+            season = max(0, min(1, 1 - vare / np.nanvar(remainder + seasonal, ddof=1)))
 
-    # E ACF features & Entropy
+    # --- ### NEW: Spike Calculation ### ---
+    # Spike measures the prevalence of "spiky" noise in the remainder
+    d = (remainder - np.nanmean(remainder)) ** 2
+    varloo = (vare * (n - 1) - d) / (n - 2) # Leave-one-out variance
+    spike = np.nanvar(varloo, ddof=1)
+
+    # --- ### NEW: Linearity & Curvature Calculation ### ---
+    # Based on orthogonal quadratic regression of the trend
+    time = np.arange(n) + 1
+    try:
+        # 注意：这里需要确保 scope 中有 poly 函数
+        poly_m = poly(time, 2)
+        time_x = add_constant(poly_m)
+        coefs = OLS(trend0, time_x).fit().params
+        linearity = coefs[1]
+        curvature = -coefs[2]
+    except:
+        linearity = np.nan
+        curvature = np.nan
+
+    # --- E ACF features & Entropy ---
     e_acf = fast_acf_features(remainder)
     e_entropy = entropy(remainder, m)['entropy']
+    e_arch_lm = arch_stat(remainder, m)['arch_lm']
+    e_kurtosis = kurtosis(remainder, fisher=True, nan_policy='omit')
+    e_shapiro_w = shapiro(remainder)[0]
 
-    # Trend stability & hurst
+    # --- Trend stability & properties ---
     trend_stability = stability(trend0, m)['stability']
     trend_hurst = hurst(trend0, m)['hurst']
     trend_nonlinearity = nonlinearity(trend0, m)['nonlinearity']
 
-    # Seasonality stability
-    try:
-        S = seasonal[:len(seasonal) // m * m]
-        segments = S.reshape(-1, m)
-        corrs = [np.corrcoef(segments[i], segments[j])[0, 1]
-                 for i in range(len(segments)) for j in range(i + 1, len(segments))]
-        seasonal_corr = np.mean(corrs) if corrs else np.nan
-    except:
-        seasonal_corr = np.nan
+    # --- Seasonality properties ---
+    seasonal_corr = np.nan
+    if m > 1:
+        try:
+            S = seasonal[:len(seasonal) // m * m]
+            segments = S.reshape(-1, m)
+            corrs = [np.corrcoef(segments[i], segments[j])[0, 1]
+                     for i in range(len(segments)) for j in range(i + 1, len(segments))]
+            seasonal_corr = np.mean(corrs) if corrs else np.nan
+        except:
+            seasonal_corr = np.nan
 
-    # Seasonal stability/lumpiness
     seasonal_lumpiness = lumpiness(seasonal, m)['lumpiness']
+    seasonal_entropy = entropy(seasonal, m)['entropy']
 
-    # Output
+    # --- Output Assembly ---
     output = {
-        'x_entropy': x_entropy,  # Entropy of raw series (predictability/signal-to-noise)
+        'x_entropy': x_entropy,
         'trend_strength': trend,
         'trend_stability': trend_stability,
         'trend_hurst': trend_hurst,
         'trend_nonlinearity': trend_nonlinearity,
+        # 新增的 features
+        'spike': spike,
+        'linearity': linearity,
+        'curvature': curvature,
+        # 其他
         'e_acf1': e_acf['x_acf1'],
+        'e_diff1_acf1': e_acf['diff1_acf1'],
         'e_acf10': e_acf['x_acf10'],
         'e_entropy': e_entropy,
+        'e_arch_lm': e_arch_lm,
+        'e_kurtosis': e_kurtosis,
+        'e_shapiro_w': e_shapiro_w,
     }
 
     if m > 1:
         output['seasonal_strength'] = season
         output['seasonal_corr'] = seasonal_corr
         output['seasonal_lumpiness'] = seasonal_lumpiness
+        output['seasonal_entropy'] = seasonal_entropy
 
     return output
