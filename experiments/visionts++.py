@@ -297,19 +297,43 @@ def run_visiontspp_experiment(
             # input_tensor: [Batch, Time, Vars]
             curr_ctx_len = input_tensor.shape[1]
             nvars_input = input_tensor.shape[2]
-            
-            model.update_config(
-                context_len=curr_ctx_len, 
-                pred_len=prediction_length, 
-                periodicity=periodicity,
-                num_patch_input=7, 
-                padding_mode='constant'
-            )
-            color_list = [i % 3 for i in range(nvars_input)]
-            
-            with torch.no_grad():
-                output = model(input_tensor, export_image=False, color_list=color_list)
-            return output
+            max_vars_per_pass = 16
+
+            def _run_single_pass(tensor_chunk):
+                chunk_vars = tensor_chunk.shape[2]
+                model.update_config(
+                    context_len=curr_ctx_len,
+                    pred_len=prediction_length,
+                    periodicity=periodicity,
+                    num_patch_input=7,
+                    padding_mode='constant'
+                )
+                color_list = [i % 3 for i in range(chunk_vars)]
+                with torch.no_grad():
+                    return model(tensor_chunk, export_image=False, color_list=color_list)
+
+            if nvars_input <= max_vars_per_pass:
+                return _run_single_pass(input_tensor)
+
+            # Split variables into chunks of 16, run sequentially, then concat.
+            median_chunks = []
+            quantile_chunks = None
+            for start in range(0, nvars_input, max_vars_per_pass):
+                end = min(start + max_vars_per_pass, nvars_input)
+                chunk_output = _run_single_pass(input_tensor[:, :, start:end])
+                preds_data = chunk_output[0] if isinstance(chunk_output, tuple) else chunk_output
+                med_chunk = preds_data[0]
+                q_chunk_list = preds_data[1]
+
+                median_chunks.append(med_chunk)
+                if quantile_chunks is None:
+                    quantile_chunks = [[] for _ in range(len(q_chunk_list))]
+                for qi, q_tensor in enumerate(q_chunk_list):
+                    quantile_chunks[qi].append(q_tensor)
+
+            med_full = torch.cat(median_chunks, dim=2)
+            q_full = [torch.cat(parts, dim=2) for parts in quantile_chunks]
+            return [med_full, q_full]
 
         print(f"  [Strategy] Using Multivariate Path (dim={dataset.target_dim}). Trying Batch Inference...")
 
