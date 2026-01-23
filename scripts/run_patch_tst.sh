@@ -135,6 +135,36 @@ log_section() {
     echo "============================================================================="
 }
 
+# Get the script directory (resolved to absolute path)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+DATASETS_YAML="$PROJECT_ROOT/src/timebench/config/datasets.yaml"
+
+# Get available terms for a dataset from datasets.yaml
+get_available_terms() {
+    local dataset="$1"
+    python3 -c "
+import yaml
+
+with open('$DATASETS_YAML') as f:
+    config = yaml.safe_load(f)
+
+dataset = '$dataset'
+datasets = config.get('datasets', {})
+
+if dataset in datasets:
+    ds_config = datasets[dataset]
+    terms = []
+    for term in ['short', 'medium', 'long']:
+        if term in ds_config:
+            terms.append(term)
+    print(' '.join(terms))
+else:
+    # Dataset not found, return all terms as fallback
+    print('short medium long')
+"
+}
+
 # -----------------------------------------------------------------------------
 # Main Pipeline
 # -----------------------------------------------------------------------------
@@ -151,15 +181,44 @@ main() {
     # Create output directory
     mkdir -p "$OUTPUT_DIR"
 
-    # Track progress
-    total_datasets=${#DATASET_LIST[@]}
-    total_terms=${#TERMS[@]}
-    total_experiments=$((total_datasets * total_terms))
+    # Calculate total experiments (considering available terms per dataset)
+    total_experiments=0
+    for dataset in "${DATASET_LIST[@]}"; do
+        available_terms_str=$(get_available_terms "$dataset")
+        IFS=' ' read -ra available_terms <<< "$available_terms_str"
+        for term in "${TERMS[@]}"; do
+            for avail_term in "${available_terms[@]}"; do
+                if [ "$term" == "$avail_term" ]; then
+                    total_experiments=$((total_experiments + 1))
+                    break
+                fi
+            done
+        done
+    done
     current=0
+    echo "Total experiments (filtered by datasets.yaml): $total_experiments"
 
     # Iterate over datasets and terms
     for dataset in "${DATASET_LIST[@]}"; do
+        # Get available terms for this dataset from datasets.yaml
+        available_terms_str=$(get_available_terms "$dataset")
+        IFS=' ' read -ra available_terms <<< "$available_terms_str"
+
         for term in "${TERMS[@]}"; do
+            # Check if the term is available for this dataset
+            term_available=false
+            for avail_term in "${available_terms[@]}"; do
+                if [ "$term" == "$avail_term" ]; then
+                    term_available=true
+                    break
+                fi
+            done
+
+            if [ "$term_available" != "true" ]; then
+                log_info "Skipping $dataset / $term (term not defined in datasets.yaml)"
+                continue
+            fi
+
             current=$((current + 1))
 
             log_section "[$current/$total_experiments] $dataset / $term"

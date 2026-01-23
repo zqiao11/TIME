@@ -91,6 +91,21 @@ def _prepare_quantile_levels(quantile_levels):
     return ordered_levels, reorder_indices
 
 
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
+
+
 # --- Helper Class: Wrap Quantiles as Forecasts ---
 class MultivariateForecast:
     """
@@ -140,19 +155,6 @@ class MockPredictor:
     def predict(self, *args, **kwargs): return self.forecasts
 
 
-
-def get_available_terms(dataset_name: str, config: dict) -> list[str]:
-    """Get the terms that are actually defined in the config for a dataset."""
-    datasets_config = config.get("datasets", {})
-    if dataset_name not in datasets_config:
-        return []
-    dataset_config = datasets_config[dataset_name]
-    available_terms = []
-    for term in ["short", "medium", "long"]:
-        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
-            available_terms.append(term)
-    return available_terms
-
 def run_visiontspp_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
     terms: list[str] = None,
@@ -179,7 +181,6 @@ def run_visiontspp_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
-    # Auto-detect available terms from config if not specified
     if terms is None:
         terms = get_available_terms(dataset_name, config)
         if not terms:
@@ -287,8 +288,8 @@ def run_visiontspp_experiment(
         for d in eval_data.input:
             target = np.asarray(d["target"]) # [V, T] or [T]
 
-            if target.ndim == 2 and target.shape[0] > target.shape[1]:
-                target = target.T
+            # if target.ndim == 2 and target.shape[0] > target.shape[1]:
+            #     target = target.T
 
             # Truncate left to max context_length
             seq_len = target.shape[-1]
@@ -313,19 +314,43 @@ def run_visiontspp_experiment(
             # input_tensor: [Batch, Time, Vars]
             curr_ctx_len = input_tensor.shape[1]
             nvars_input = input_tensor.shape[2]
+            max_vars_per_pass = 16
 
-            model.update_config(
-                context_len=curr_ctx_len,
-                pred_len=prediction_length,
-                periodicity=periodicity,
-                num_patch_input=7,
-                padding_mode='constant'
-            )
-            color_list = [i % 3 for i in range(nvars_input)]
+            def _run_single_pass(tensor_chunk):
+                chunk_vars = tensor_chunk.shape[2]
+                model.update_config(
+                    context_len=curr_ctx_len,
+                    pred_len=prediction_length,
+                    periodicity=periodicity,
+                    num_patch_input=7,
+                    padding_mode='constant'
+                )
+                color_list = [i % 3 for i in range(chunk_vars)]
+                with torch.no_grad():
+                    return model(tensor_chunk, export_image=False, color_list=color_list)
 
-            with torch.no_grad():
-                output = model(input_tensor, export_image=False, color_list=color_list)
-            return output
+            if nvars_input <= max_vars_per_pass:
+                return _run_single_pass(input_tensor)
+
+            # Split variables into chunks of 16, run sequentially, then concat.
+            median_chunks = []
+            quantile_chunks = None
+            for start in range(0, nvars_input, max_vars_per_pass):
+                end = min(start + max_vars_per_pass, nvars_input)
+                chunk_output = _run_single_pass(input_tensor[:, :, start:end])
+                preds_data = chunk_output[0] if isinstance(chunk_output, tuple) else chunk_output
+                med_chunk = preds_data[0]
+                q_chunk_list = preds_data[1]
+
+                median_chunks.append(med_chunk)
+                if quantile_chunks is None:
+                    quantile_chunks = [[] for _ in range(len(q_chunk_list))]
+                for qi, q_tensor in enumerate(q_chunk_list):
+                    quantile_chunks[qi].append(q_tensor)
+
+            med_full = torch.cat(median_chunks, dim=2)
+            q_full = [torch.cat(parts, dim=2) for parts in quantile_chunks]
+            return [med_full, q_full]
 
         print(f"  [Strategy] Using Multivariate Path (dim={dataset.target_dim}). Trying Batch Inference...")
 
@@ -453,8 +478,10 @@ def run_visiontspp_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run VisionTS++ experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"], help="Dataset name(s)")
-    parser.add_argument("--terms", type=str, nargs="+", default=None, choices=["short", "medium", "long"], help="Terms to evaluate. If not specified, auto-detect from config.")
+    parser.add_argument("--dataset", type=str, nargs="+", default=["Water_Quality_Darwin/15T"], help="Dataset name(s)")
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
+                    choices=["short", "medium", "long"],
+                    help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base", choices=["base", "large"], help="Model size")
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")

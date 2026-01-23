@@ -45,7 +45,6 @@ from timebench.evaluation.data import (
     get_dataset_settings,
     load_dataset_config,
 )
-from timebench.evaluation.metrics import compute_per_window_metrics
 from timebench.models.patch_tst import PatchTSTEstimator
 
 # Load environment variables
@@ -257,10 +256,11 @@ def run_tuning(
     # Load dataset
     # PatchTST operates on univariate series, so we flatten multivariate datasets
     # into multiple independent univariate series (same as gift_eval)
+    to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
     dataset = Dataset(
         name=dataset_name,
         term=term,
-        to_univariate=True,  # PatchTST requires univariate input
+        to_univariate=to_univariate,  # PatchTST requires univariate input
         prediction_length=prediction_length,
         test_length=test_length,
         val_length=val_length,
@@ -328,10 +328,11 @@ def run_training(
     # Load dataset
     # PatchTST operates on univariate series, so we flatten multivariate datasets
     # into multiple independent univariate series (same as gift_eval)
+    to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
     dataset = Dataset(
         name=dataset_name,
         term=term,
-        to_univariate=True,  # PatchTST requires univariate input
+        to_univariate=to_univariate,  # PatchTST requires univariate input
         prediction_length=prediction_length,
         test_length=test_length,
         val_length=val_length,

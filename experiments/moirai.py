@@ -35,7 +35,7 @@ from timebench.evaluation.data import (
 # Load environment variables
 load_dotenv()
 
-patch_size_dict = {"S": 64, "T": 32, "H": 32, "D": 16, "B": 16, "W": 16, "M": 8, "Q": 8, "Y": 8, "A": 8}
+# patch_size_dict = {"S": 64, "T": 32, "H": 32, "D": 16, "B": 16, "W": 16, "M": 8, "Q": 8, "Y": 8, "A": 8}
 
 def get_available_terms(dataset_name: str, config: dict) -> list[str]:
     """Get the terms that are actually defined in the config for a dataset."""
@@ -115,9 +115,9 @@ def run_moirai_experiment(
         print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
         # Moirai hyperparameter (constant across all terms)
-        freq = dataset_name.split("/")[1]           # 例如 "15T", "H", "5T"
-        freq_unit = freq.lstrip('0123456789')       # 去掉前面的数字: "15T" -> "T", "H" -> "H"
-        patch_size = patch_size_dict[freq_unit]     # 用单位查找 patch_size
+        # freq = dataset_name.split("/")[1]           # 例如 "15T", "H", "5T"
+        # freq_unit = freq.lstrip('0123456789')       # 去掉前面的数字: "15T" -> "T", "H" -> "H"
+        patch_size = 32  # patch_size_dict[freq_unit]     # 用单位查找 patch_size
 
         # Try multivariate first, fallback to univariate on OOM
         for to_univariate in [False, True]:
@@ -126,7 +126,7 @@ def run_moirai_experiment(
             # Initialize model for this term with the term's prediction_length
             print(f"  Initializing Moirai-{model_size} model ({mode_name} mode) with prediction_length={prediction_length}...")
             model = MoiraiForecast(
-                module=MoiraiModule.from_pretrained(f"Salesforce/moirai-1.0-R-{model_size}"),
+                module=MoiraiModule.from_pretrained(f"Salesforce/moirai-1.1-R-{model_size}"),
                 prediction_length=prediction_length,  # From config for this term
                 context_length=context_length,
                 patch_size=patch_size,
