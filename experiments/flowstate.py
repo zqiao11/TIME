@@ -17,7 +17,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from pandas.tseries.frequencies import to_offset
 
 # Ensure timebench is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -36,6 +35,7 @@ load_dotenv()
 
 DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 BASE_SEASONALITY = 24.0
+WEEKLY_DOMAINS = {"Transport", "Healthcare", "Sales"}
 
 
 def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
@@ -96,37 +96,80 @@ class MockPredictor:
         return self.forecasts
 
 
-def _normalize_freq(freq: str) -> str:
-    try:
-        return str(to_offset(freq).name).upper()
-    except Exception:
-        return str(freq).upper()
+def _normalize_flowstate_freq(freq: str) -> str:
+    freq_str = str(freq).strip().upper()
+    if freq_str.endswith("MIN"):
+        num = freq_str[:-3]
+        return f"{num}T" if num else "T"
+    if freq_str in ("ME", "MS"):
+        return "M"
+    if freq_str == "Y":
+        return "A"
+    return freq_str
+
+
+def _flowstate_fixed_factor(freq: str, has_weekly: bool) -> float:
+    if freq == "4S":
+        return BASE_SEASONALITY / (3600.0 / 4)
+    if freq == "10S":
+        return BASE_SEASONALITY / 360.0
+    if freq == "T":
+        return BASE_SEASONALITY / (24.0 * 60.0)
+    if freq.endswith("T") and freq[:-1].isdigit():
+        n_min = int(freq[:-1])
+        return BASE_SEASONALITY / (24.0 * 60.0 / n_min)
+    if freq == "H":
+        return BASE_SEASONALITY / 24.0
+    if freq.endswith("H") and freq[:-1].isdigit():
+        n_hr = int(freq[:-1])
+        return BASE_SEASONALITY / (24.0 / n_hr)
+    if freq == "6H":
+        return BASE_SEASONALITY / 4.0
+    if freq == "D":
+        return BASE_SEASONALITY / 7.0 if has_weekly else BASE_SEASONALITY / 365.0
+    if freq.endswith("D") and "WED" not in freq and freq[:-1].isdigit():
+        n_day = int(freq[:-1])
+        factor = BASE_SEASONALITY / 7.0 if has_weekly else BASE_SEASONALITY / 365.0
+        return factor * n_day
+    if freq == "W" or "W-" in freq:
+        return BASE_SEASONALITY / (365.0 / 7.0)
+    if freq == "M" or "M-" in freq:
+        return BASE_SEASONALITY / 12.0
+    if "Q" in freq:
+        return BASE_SEASONALITY / 4.0
+    if "A" in freq:
+        return BASE_SEASONALITY / 4.0
+    raise NotImplementedError(f"{freq} not implemented for FlowState scale factor.")
+
+
+def _resolve_domain(
+    domain_override: str | None,
+) -> str | None:
+    if domain_override:
+        return domain_override
+    return None
 
 
 def _infer_scale_factor(
     freq: str,
     season_length: int,
     override: float | None,
-    daily_has_weekly_cycle: bool,
+    has_weekly_cycle: bool,
     seasonality_override: float | None,
+    no_daily: bool,
 ) -> tuple[float, str]:
     if override is not None:
         return float(override), "manual"
     if seasonality_override is not None and seasonality_override > 0:
         return BASE_SEASONALITY / float(seasonality_override), "seasonality_override"
-    norm = _normalize_freq(freq)
-    if norm in ("15T", "15MIN"):
-        return 0.25, "recommended_table"
-    if norm in ("30T", "30MIN"):
-        return 0.5, "recommended_table"
-    if norm == "H":
-        return 1.0, "recommended_table"
-    if norm in ("D", "B"):
-        return (3.43 if daily_has_weekly_cycle else 0.0656), "recommended_table"
-    if norm == "W" or norm.startswith("W-"):
-        return 0.46, "recommended_table"
-    if norm == "M":
-        return 2.0, "recommended_table"
+    norm = _normalize_flowstate_freq(freq)
+    try:
+        scale = _flowstate_fixed_factor(norm, has_weekly=has_weekly_cycle)
+        if no_daily:
+            scale /= 7.0
+        return scale, "flowstate_fixed_factor"
+    except NotImplementedError:
+        pass
     if season_length and season_length > 0:
         return BASE_SEASONALITY / float(season_length), "seasonality"
     return 1.0, "fallback"
@@ -199,13 +242,15 @@ def run_flowstate_experiment(
     terms: list[str] = None,
     model_id: str = "ibm-granite/granite-timeseries-flowstate-r1",
     output_dir: str | None = None,
-    batch_size: int = 1,
-    context_length: int = 2048,
+    batch_size: int = 16,
+    context_length: int = 4000,
     scale_factor: float | None = None,
     daily_has_weekly_cycle: bool = True,
+    no_daily: bool | None = None,
     seasonality_override: float | None = None,
     cuda_device: str = "0",
     config_path: Path | None = None,
+    domain_override: str | None = None,
     use_val: bool = False,
     quantile_levels: list[float] | None = None,
 ):
@@ -282,12 +327,19 @@ def run_flowstate_experiment(
             eval_data = dataset.test_data
 
         season_length = get_seasonality(dataset.freq)
+        domain = _resolve_domain(domain_override)
+        has_weekly_cycle = daily_has_weekly_cycle
+        if domain is not None:
+            has_weekly_cycle = domain in WEEKLY_DOMAINS
+        if no_daily is None:
+            no_daily = "l2c" in dataset_name.lower()
         term_scale, scale_source = _infer_scale_factor(
             dataset.freq,
             season_length,
             scale_factor,
-            daily_has_weekly_cycle,
+            has_weekly_cycle,
             seasonality_override,
+            no_daily,
         )
         model_quantiles = getattr(predictor.config, "quantiles", None)
         if model_quantiles and quantile_levels != model_quantiles:
@@ -301,9 +353,17 @@ def run_flowstate_experiment(
         print(f"    - {split_name}: {data_length} steps")
         print(f"    - Windows: {num_windows}")
         print(f"    - Scale factor: {term_scale:.4f} ({scale_source})")
+        if domain is not None:
+            print(f"    - Domain: {domain} (weekly_cycle={has_weekly_cycle})")
+        if no_daily:
+            print("    - no_daily: True (scale_factor corrected /7)")
 
         if season_length and prediction_length > season_length * 30:
             print("    Warning: prediction_length exceeds 30 seasonal cycles.")
+
+        max_context = int(getattr(predictor.config, "context_length", context_length) / term_scale)
+        if context_length and context_length > 0:
+            max_context = min(max_context, context_length)
 
         print(f"  Running predictions (Batch size: {batch_size}, sequential)...")
 
@@ -316,8 +376,8 @@ def run_flowstate_experiment(
                 target = np.nan_to_num(target, nan=0.0)
             if target.ndim > 1:
                 target = target.squeeze()
-            if context_length and len(target) > context_length:
-                target = target[-context_length:]
+            if max_context and len(target) > max_context:
+                target = target[-max_context:]
             target = _impute_nans_1d(target)
 
             input_tensor = torch.tensor(target, device=device).view(-1, 1, 1)
@@ -408,14 +468,20 @@ def main():
                         help="HuggingFace model id for FlowState")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Output directory for results")
-    parser.add_argument("--batch-size", type=int, default=1,
+    parser.add_argument("--batch-size", type=int, default=128,
                         help="Batch size (sequential mode)")
-    parser.add_argument("--context-length", type=int, default=2048,
+    parser.add_argument("--context-length", type=int, default=4000,
                         help="Maximum context length")
     parser.add_argument("--scale-factor", type=float, default=None,
                         help="Override scale factor (default uses base_seasonality/seasonality)")
     parser.add_argument("--daily-no-weekly-cycle", action="store_true",
                         help="For daily data, use 0.0656 instead of 3.43")
+    parser.add_argument("--no-daily", action="store_true",
+                        help="Apply /7 correction for datasets without daily cycles")
+    parser.add_argument("--force-daily", action="store_true",
+                        help="Disable auto no-daily correction (e.g., for l2c datasets)")
+    parser.add_argument("--domain", type=str, default=None,
+                        help="Override dataset domain for weekly-cycle logic")
     parser.add_argument("--seasonality", type=float, default=None,
                         help="Override seasonality N and use scale_factor=24/N")
     parser.add_argument(
@@ -435,7 +501,6 @@ def main():
     args = parser.parse_args()
 
     config_path = Path(args.config) if args.config else None
-
     if len(args.dataset) == 1 and args.dataset[0] == "all_datasets":
         config = load_dataset_config(config_path)
         datasets = list(config.get("datasets", {}).keys())
@@ -461,7 +526,9 @@ def main():
                 context_length=args.context_length,
                 scale_factor=args.scale_factor,
                 daily_has_weekly_cycle=not args.daily_no_weekly_cycle,
+                no_daily=(False if args.force_daily else (True if args.no_daily else None)),
                 seasonality_override=args.seasonality,
+                domain_override=args.domain,
                 quantile_levels=args.quantiles,
                 cuda_device=args.cuda_device,
                 config_path=config_path,
