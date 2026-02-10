@@ -2,7 +2,7 @@ from huggingface_hub import snapshot_download
 import os
 
 # ================= 配置区域 =================
-REPO_ID = "TIME-benchmark/TIME-1.0"
+REPO_ID = "Real-TSF/TIME"
 
 # 【重要修改】
 # 因为你的仓库里已经有了 'data' and 'output' 文件夹结构，

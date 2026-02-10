@@ -64,7 +64,7 @@ setup_conda_env
 # python experiments/kairos_model.py --dataset "NE_China_Wind/H"
 
 # ########################### Energy ###########################
-# python experiments/kairos_model.py --dataset "Australia_Solar/H"
+python experiments/kairos_model.py --dataset "Australia_Solar/H"
 # python experiments/kairos_model.py --dataset "epf_electricity_price/H"
 # python experiments/kairos_model.py --dataset "OpenElectricity_NEM/5T"
 # python experiments/kairos_model.py --dataset "EWELD_Load/15T"
@@ -72,24 +72,24 @@ setup_conda_env
 # ########################### Transportation ###########################
 # python experiments/kairos_model.py --dataset "SG_Carpark/15T"
 # python experiments/kairos_model.py --dataset "Finland_Traffic/15T"
-# python experiments/kairos_model.py --dataset "Port_Activity/D"
-# python experiments/kairos_model.py --dataset "Port_Activity/W"
+python experiments/kairos_model.py --dataset "Port_Activity/D"
+python experiments/kairos_model.py --dataset "Port_Activity/W"
 
 # ########################### Healthcare ###########################
 # python experiments/kairos_model.py --dataset "ECDC_COVID/D"
 # python experiments/kairos_model.py --dataset "ECDC_COVID/W"
 
 # ########################### Finance ###########################
-# python experiments/kairos_model.py --dataset "Crypto/D"
+python experiments/kairos_model.py --dataset "Crypto/D"
 # python experiments/kairos_model.py --dataset "US_Term_Structure/B"
 # python experiments/kairos_model.py --dataset "Oil_Price/B"
 
 # ########################### Economics ###########################
-# python experiments/kairos_model.py --dataset "Job_Claims/W"
+python experiments/kairos_model.py --dataset "Job_Claims/W"
 # python experiments/kairos_model.py --dataset "Uncertainty_1M/M"
-# python experiments/kairos_model.py --dataset "Housing_Inventory/M"
+python experiments/kairos_model.py --dataset "Housing_Inventory/M"
 # python experiments/kairos_model.py --dataset "JOLTS/M"
-# python experiments/kairos_model.py --dataset "US_Labor/M"
+python experiments/kairos_model.py --dataset "US_Labor/M"
 # python experiments/kairos_model.py --dataset "Vehicle_Supply/M"
 # python experiments/kairos_model.py --dataset "Auto_Production_SF/M"
 # python experiments/kairos_model.py --dataset "Commodity_Production/M"
@@ -99,9 +99,9 @@ setup_conda_env
 
 # ########################### Sales ###########################
 # python experiments/kairos_model.py --dataset "Vehicle_Sales/M"
-# python experiments/kairos_model.py --dataset "Online_Retail_2_UCI/D"
-# python experiments/kairos_model.py --dataset "Supply_Chain_Customer/D"
-# python experiments/kairos_model.py --dataset "Supply_Chain_Location/D"
+python experiments/kairos_model.py --dataset "Online_Retail_2_UCI/D"
+python experiments/kairos_model.py --dataset "Supply_Chain_Customer/D"
+python experiments/kairos_model.py --dataset "Supply_Chain_Location/D"
 
 # ########################### CloudOPS ###########################
 # python experiments/kairos_model.py --dataset "azure2019_D/5T"
@@ -110,5 +110,5 @@ setup_conda_env
 
 # ########################### Industry ###########################
 # python experiments/kairos_model.py --dataset "Smart_Manufacturing/H"
-python experiments/kairos_model.py --dataset "MetroPT-3/5T"
+# python experiments/kairos_model.py --dataset "MetroPT-3/5T"
 python experiments/kairos_model.py --dataset "Global_Influenza/W"

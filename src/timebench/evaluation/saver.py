@@ -253,10 +253,24 @@ def save_window_predictions(
 
     # Save quantiles to npz file (instead of full samples)
     # Use float16 to reduce storage (sufficient for visualization purposes)
+    # Apply dynamic scaling to prevent float16 overflow (max ~65504)
+    FLOAT16_SAFE_MAX = 60000.0  # Leave margin below 65504
+    max_abs_val = np.abs(predictions_quantiles).max()
+
+    prediction_scale_factor = 1.0
+    if max_abs_val > FLOAT16_SAFE_MAX:
+        # Calculate scale factor as power of 10 for cleaner scaling
+        prediction_scale_factor = float(10 ** np.ceil(np.log10(max_abs_val / FLOAT16_SAFE_MAX)))
+        print(f"    ⚠️  Predictions max value ({max_abs_val:.2f}) exceeds float16 safe range.")
+        print(f"    ⚠️  Applying scale factor: {prediction_scale_factor:.0f} (values will be divided)")
+        predictions_quantiles_scaled = predictions_quantiles / prediction_scale_factor
+    else:
+        predictions_quantiles_scaled = predictions_quantiles
+
     npz_path = os.path.join(ds_output_dir, "predictions.npz")
     np.savez_compressed(
         npz_path,
-        predictions_quantiles=predictions_quantiles.astype(np.float16),
+        predictions_quantiles=predictions_quantiles_scaled.astype(np.float16),
         quantile_levels=quantile_levels_array.astype(np.float16),
     )
     print(f"    Saved predictions (quantiles) to {npz_path}")
@@ -289,6 +303,7 @@ def save_window_predictions(
         "seasonality": seasonality,
         "context_length": context_len,
         "metric_names": list(metrics.keys()),
+        "prediction_scale_factor": prediction_scale_factor,  # For float16 overflow prevention
     }
 
     # Add model hyperparameters if provided

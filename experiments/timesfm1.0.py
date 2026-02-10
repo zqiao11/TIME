@@ -103,6 +103,19 @@ class MockPredictor:
         return self.forecasts
 
 
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
+
+
 def _get_model_config(model_size: str) -> dict:
     model_map = {
         "base": {
@@ -145,8 +158,11 @@ def run_timesfm_experiment(
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
+    # Auto-detect available terms from config if not specified
     if terms is None:
-        terms = ["short", "medium", "long"]
+        terms = get_available_terms(dataset_name, config)
+        if not terms:
+            raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if quantile_levels is None:
         quantile_levels = DEFAULT_QUANTILE_LEVELS
@@ -217,10 +233,14 @@ def run_timesfm_experiment(
             ),
         )
 
+        # Initialize the dataset
+        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
+
+        # Load dataset with config settings
         dataset = Dataset(
             name=dataset_name,
             term=term,
-            to_univariate=True,
+            to_univariate=to_univariate, # TimesFM is univariate
             prediction_length=prediction_length,
             test_length=test_length,
             val_length=val_length,
@@ -342,9 +362,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run TimesFM-1.0 inference")
     parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s). 'all_datasets' for all.")
-    parser.add_argument("--terms", type=str, nargs="+", default=["short", "medium", "long"],
+    parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
-                        help="Terms to evaluate")
+                        help="Terms to evaluate. If not specified, auto-detect from config.")
     parser.add_argument("--model-size", type=str, default="base",
                         choices=["base"],
                         help="TimesFM model size")

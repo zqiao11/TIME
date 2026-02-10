@@ -37,53 +37,55 @@ from timebench.models import SeasonalNaivePredictor
 load_dotenv()
 
 
-# Custom seasonality mapping for frequencies where get_seasonality returns 1
-# These are more meaningful seasonal periods for forecasting
-CUSTOM_SEASONALITY = {
-    "D": 7,      # Daily → weekly seasonality (7 days)
-    "B": 5,      # Business days → weekly seasonality (5 business days)
-    "W": 52,     # Weekly → yearly seasonality (52 weeks)
-    "M": 12,     # Monthly → yearly seasonality (12 months)
-    "Q": 4,      # Quarterly → yearly seasonality (4 quarters)
-    "A": 1,      # Annual → no meaningful sub-annual seasonality
-    "Y": 1,      # Yearly → no meaningful sub-annual seasonality
-}
+# NOTE: We do not use custom seasonality:
+# (1) to align with GE GluontTS
+# (2) freq needs to be the same across models to ensure their MASE using the same seasonal_error for norm.
+# PS: If want to use custom seasonality, pass gluonts_season to save_window_predictions; not season_length
+
+# # Custom seasonality mapping for frequencies where get_seasonality returns 1
+# # These are more meaningful seasonal periods for forecasting
+# CUSTOM_SEASONALITY = {
+#     "D": 7,      # Daily → weekly seasonality (7 days)
+#     "W": 52,     # Weekly → yearly seasonality (52 weeks)
+#     "A": 1,      # Annual → no meaningful sub-annual seasonality
+#     "Y": 1,      # Yearly → no meaningful sub-annual seasonality
+# }
 
 
-def get_effective_seasonality(freq: str) -> int:
-    """
-    Get effective seasonality for a given frequency.
+# def get_effective_seasonality(freq: str) -> int:
+#     """
+#     Get effective seasonality for a given frequency.
 
-    Uses custom mapping for frequencies where gluonts.get_seasonality returns 1,
-    otherwise falls back to get_seasonality.
+#     Uses custom mapping for frequencies where gluonts.get_seasonality returns 1,
+#     otherwise falls back to get_seasonality.
 
-    Args:
-        freq: Frequency string (e.g., 'D', 'H', '15T')
+#     Args:
+#         freq: Frequency string (e.g., 'D', 'H', '15T')
 
-    Returns:
-        Seasonal period length
-    """
-    # Normalize frequency string (handle cases like '1D', '1H')
-    freq_upper = freq.upper().lstrip('0123456789')
+#     Returns:
+#         Seasonal period length
+#     """
+#     # Normalize frequency string (handle cases like '1D', '1H')
+#     freq_upper = freq.upper().lstrip('0123456789')
 
-    # Check custom mapping first
-    if freq_upper in CUSTOM_SEASONALITY:
-        return CUSTOM_SEASONALITY[freq_upper]
+#     # Check custom mapping first
+#     if freq_upper in CUSTOM_SEASONALITY:
+#         return CUSTOM_SEASONALITY[freq_upper]
 
-    # Fall back to gluonts seasonality
-    season_length = get_seasonality(freq)
+#     # Fall back to gluonts seasonality
+#     season_length = get_seasonality(freq)
 
-    # # If get_seasonality returns 1, try to infer a reasonable default
-    # if season_length == 1:
-    #     # For sub-daily frequencies not in our mapping, use daily seasonality
-    #     if 'T' in freq_upper or 'MIN' in freq_upper:
-    #         # Minutes per day / minutes per period
-    #         return 24 * 60 // max(1, int(''.join(filter(str.isdigit, freq)) or 1))
-    #     elif 'S' in freq_upper:
-    #         # Seconds: use hourly seasonality
-    #         return 3600
+#     # # If get_seasonality returns 1, try to infer a reasonable default
+#     # if season_length == 1:
+#     #     # For sub-daily frequencies not in our mapping, use daily seasonality
+#     #     if 'T' in freq_upper or 'MIN' in freq_upper:
+#     #         # Minutes per day / minutes per period
+#     #         return 24 * 60 // max(1, int(''.join(filter(str.isdigit, freq)) or 1))
+#     #     elif 'S' in freq_upper:
+#     #         # Seconds: use hourly seasonality
+#     #         return 3600
 
-    return season_length
+#     return season_length
 
 
 
@@ -152,25 +154,30 @@ def run_seasonal_naive_experiment(
 
         print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
+        # Initialize the dataset
+        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
+
         # Load dataset with config settings
         dataset = Dataset(
             name=dataset_name,
             term=term,
-            to_univariate=False,
+            to_univariate=to_univariate,
             prediction_length=prediction_length,
             test_length=test_length,
             val_length=val_length,
         )
 
-        # Get seasonality for the dataset frequency
-        # Use custom mapping for frequencies where get_seasonality returns 1
-        season_length = get_effective_seasonality(dataset.freq)
-        gluonts_season = get_seasonality(dataset.freq)
-        if season_length != gluonts_season:
-            print(f"  Seasonality: {season_length} (custom, gluonts default was {gluonts_season}, freq={dataset.freq})")
-        else:
-            print(f"  Detected seasonality: {season_length} (freq={dataset.freq})")
 
+        # # Get seasonality for the dataset frequency
+        # # Use custom mapping for frequencies where get_seasonality returns 1
+        # season_length = get_effective_seasonality(dataset.freq)
+        # gluonts_season = get_seasonality(dataset.freq)
+        # if season_length != gluonts_season:
+        #     print(f"  Seasonality: {season_length} (custom, gluonts default was {gluonts_season}, freq={dataset.freq})")
+        # else:
+        #     print(f"  Detected seasonality: {season_length} (freq={dataset.freq})")
+
+        season_length = get_seasonality(dataset.freq)
         # Initialize Seasonal Naive predictor
         predictor = SeasonalNaivePredictor(
             prediction_length=dataset.prediction_length,

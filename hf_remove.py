@@ -1,13 +1,20 @@
 from huggingface_hub import HfApi
 
 # ================= 配置区域 =================
-REPO_ID = "TIME-benchmark/TIME-1.0"
+REPO_ID = "Real-TSF/TIME"
 
 # 定义删除任务列表
 # 格式: 只需要填写 "仓库里的文件夹路径" (字符串列表)
 FOLDERS_TO_DELETE = [
-    "data/hf_dataset",      # 将删除仓库根目录下的 /data 文件夹
-    # "output/results"
+    # "data/hf_dataset",      # 将删除仓库根目录下的 /data 文件夹
+    # "data/hf_dataset/epf_electricity_price",
+    # "output/results/moirai_small",
+    # "output/results/patch_tst",
+    # "output/results/patch_tst/hparams",
+    # "output/results/patch_tst/optuna",
+    # "output/features",
+    "output/results/patch_tst",
+    "output/results/flowstate"
 ]
 # ===========================================
 

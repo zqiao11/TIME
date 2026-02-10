@@ -22,6 +22,9 @@ from huggingface_hub import snapshot_download
 import random
 import traceback
 import warnings
+import pandas as pd
+from gluonts.time_feature import get_seasonality
+
 
 # --- [FIX] Filter Warnings to keep logs clean ---
 warnings.filterwarnings("ignore")
@@ -31,6 +34,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from dotenv import load_dotenv
 from visionts import VisionTSpp, freq_to_seasonality_list
+import visionts.util as visionts_util
 
 from timebench.evaluation.saver import save_window_quantile_predictions
 from timebench.evaluation.data import (
@@ -91,12 +95,35 @@ def _prepare_quantile_levels(quantile_levels):
     return ordered_levels, reorder_indices
 
 
+def _normalize_offset_name(name: str) -> str:
+    base = name.split("-")[0]
+    base_lower = base.lower()
+    if base_lower == "min":
+        return "T"
+    if base_lower == "h":
+        return "H"
+    if base_lower == "s":
+        return "S"
+    if base_lower == "d":
+        return "D"
+    if base_lower == "w":
+        return "W"
+    if base_lower in ("me", "ms", "m"):
+        return "M"
+    if base_lower.startswith("q"):
+        return "Q"
+    if base_lower.startswith(("y", "a")):
+        return "A"
+    if base_lower == "b":
+        return "B"
+    return base.upper()
+
+
 def get_available_terms(dataset_name: str, config: dict) -> list[str]:
     """Get the terms that are actually defined in the config for a dataset."""
     datasets_config = config.get("datasets", {})
     if dataset_name not in datasets_config:
         return []
-
     dataset_config = datasets_config[dataset_name]
     available_terms = []
     for term in ["short", "medium", "long"]:
@@ -104,6 +131,21 @@ def get_available_terms(dataset_name: str, config: dict) -> list[str]:
             available_terms.append(term)
     return available_terms
 
+
+def freq_to_seasonality_list_compat(freq: str) -> list[int]:
+    try:
+        offset = pd.tseries.frequencies.to_offset(freq)
+        base = _normalize_offset_name(offset.name)
+        base_seasonality_list = visionts_util.POSSIBLE_SEASONALITIES.get(base, [])
+        seasonality_list = []
+        for base_seasonality in base_seasonality_list:
+            seasonality, remainder = divmod(base_seasonality, offset.n)
+            if not remainder:
+                seasonality_list.append(seasonality)
+        seasonality_list.append(1)
+        return seasonality_list
+    except Exception:
+        return freq_to_seasonality_list(freq)
 
 
 # --- Helper Class: Wrap Quantiles as Forecasts ---
@@ -274,7 +316,8 @@ def run_visiontspp_experiment(
         print(f"    - Prediction length: {dataset.prediction_length}")
         print(f"    - Windows: {num_windows}")
 
-        periodicity_list = freq_to_seasonality_list(dataset.freq)
+        periodicity_list = freq_to_seasonality_list_compat(dataset.freq)
+
         periodicity = periodicity_list[0]
         print(f"    - Derived Periodicity: {periodicity}")
 
@@ -287,9 +330,6 @@ def run_visiontspp_experiment(
 
         for d in eval_data.input:
             target = np.asarray(d["target"]) # [V, T] or [T]
-
-            # if target.ndim == 2 and target.shape[0] > target.shape[1]:
-            #     target = target.T
 
             # Truncate left to max context_length
             seq_len = target.shape[-1]
@@ -457,12 +497,14 @@ def run_visiontspp_experiment(
 
             mock_predictor = MockPredictor(forecasts)
 
+            gluonts_season = get_seasonality(dataset.freq)
+
             metadata = save_window_quantile_predictions(
                 dataset=dataset,
                 predictor=mock_predictor,
                 ds_config=ds_config,
                 output_base_dir=output_dir,
-                seasonality=periodicity,
+                seasonality=gluonts_season,  # Use gluonts_season to ensure MASE uses the same seasonal_error for norm.
                 model_hyperparams=model_hyperparams,
                 quantile_levels=quantile_levels,
             )

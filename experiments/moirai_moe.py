@@ -92,7 +92,7 @@ def run_moirai_moe_experiment(
     # --- Initialize Moirai-MoE Model (Once per dataset wrapper) ---
     print(f"Loading Moirai-MoE-{model_size} model...")
     hf_model_path = f"Salesforce/moirai-moe-1.0-R-{model_size}"
-    
+
     try:
         module = MoiraiMoEModule.from_pretrained(hf_model_path)
         # We initialize the wrapper later per term because prediction_length changes
@@ -122,12 +122,12 @@ def run_moirai_moe_experiment(
             feat_dynamic_real_dim=0,
             past_feat_dynamic_real_dim=0,
         )
-        
+
         # Load Dataset
         dataset = Dataset(
             name=dataset_name,
             term=term,
-            to_univariate=False, 
+            to_univariate=False,
             prediction_length=prediction_length,
             test_length=test_length,
             val_length=val_length,
@@ -258,7 +258,7 @@ def run_moirai_moe_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Moirai-MoE experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["TSBench_IMOS_v2/15T"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets'")
     parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
