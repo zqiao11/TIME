@@ -277,12 +277,6 @@ def build_dataset_from_csvs(
     return hf_dataset
 
 
-# Aliases for backward compatibility
-make_generator_from_df = dataframes_to_generator
-convert_csvs_to_gift_eval = build_dataset_from_csvs
-
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Build a HuggingFace Arrow dataset from a directory of CSV time series."

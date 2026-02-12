@@ -25,7 +25,9 @@ import timesfm  # 引入 TimesFM
 from dotenv import load_dotenv
 from gluonts.time_feature import get_seasonality
 
-from timebench.evaluation.saver import save_window_quantile_predictions
+from timebench.evaluation.saver import save_window_predictions
+from timebench.evaluation.utils import get_available_terms
+
 from timebench.evaluation.data import (
     Dataset,
     get_dataset_settings,
@@ -50,77 +52,23 @@ def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
     return series
 
 
-class TimesFMForecast:
-    """
-    Wrap TimesFM quantile outputs to match TimeBench Forecast interface.
-    """
-    def __init__(self, quantiles, quantile_levels: list[float]):
-        q_data = np.asarray(quantiles, dtype=np.float32)
-        if q_data.ndim == 2:
-            if q_data.shape[0] != len(quantile_levels) and q_data.shape[1] == len(quantile_levels):
-                q_data = q_data.T
-            q_data = q_data[:, np.newaxis, :]
-        elif q_data.ndim != 3:
-            raise ValueError(f"Unexpected TimesFM quantile shape: {q_data.shape}")
-
-        self._quantiles = q_data
-        self._quantile_levels = [float(q) for q in quantile_levels]
-
-    def quantile(self, q: float):
-        q_levels = np.asarray(self._quantile_levels, dtype=float)
-        matches = np.where(np.isclose(q_levels, q, atol=1e-6))[0]
-        if matches.size == 0:
-            raise ValueError(f"Quantile {q} not available. Supported: {self._quantile_levels}")
-        return self._quantiles[int(matches[0])]
-
-    def cpu(self):
-        return self
-
-
-class MockPredictor:
-    """
-    Wrap pre-computed forecasts to satisfy save_window_quantile_predictions interface.
-    """
-    def __init__(self, forecasts):
-        self.forecasts = forecasts
-
-    def predict(self, dataset_input, **kwargs):
-        return self.forecasts
-
-
-def get_available_terms(dataset_name: str, config: dict) -> list[str]:
-    """Get the terms that are actually defined in the config for a dataset."""
-    datasets_config = config.get("datasets", {})
-    if dataset_name not in datasets_config:
-        return []
-    dataset_config = datasets_config[dataset_name]
-    available_terms = []
-    for term in ["short", "medium", "long"]:
-        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
-            available_terms.append(term)
-    return available_terms
-
 
 def run_timesfm_experiment(
-    dataset_name: str = "TSBench_IMOS_v2/15T",
+    dataset_name: str,
     terms: list[str] = None,
     model_size: str = "base",
     output_dir: str | None = None,
     batch_size: int = 32,
-    context_length: int = 1024,  # TimesFM default max context
-    cuda_device: str = "0",
+    context_length: int = 1024,
     config_path: Path | None = None,
     use_val: bool = False,
     quantile_levels: list[float] | None = None,
-    # TimesFM specific flags (can be exposed as args if needed)
     use_continuous_quantile_head: bool = True,
     force_flip_invariance: bool = True,
 ):
     """
     Run TimesFM model experiments on a dataset with specified terms.
     """
-    # Set CUDA device
-    os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("Loading configuration...")
@@ -136,7 +84,7 @@ def run_timesfm_experiment(
         quantile_levels = DEFAULT_QUANTILE_LEVELS
 
     if output_dir is None:
-        output_dir = f"./output/results/timesfm_{model_size}"
+        output_dir = "./output/results/TimesFM-2.5"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -260,24 +208,11 @@ def run_timesfm_experiment(
             )
 
             # quantile_forecast: (batch, horizon, 10) -> mean, 10th...90th
-            fc_quantiles.append(quantile_forecast)
+            processed_quantile_forecast = quantile_forecast[:, :, 1:].transpose(0, 2, 1)  # (batch, 9, horizon)
+            fc_quantiles.extend(list(processed_quantile_forecast))
 
             if (i + batch_size) % (batch_size * 10) == 0:
                 print(f"    Processed {i + batch_size}/{num_total_instances}...")
-
-        # Concatenate results
-        full_quantiles = np.concatenate(fc_quantiles, axis=0) # (Total, Horizon, 10)
-
-        forecasts = []
-        for idx in range(num_total_instances):
-            q_with_mean = full_quantiles[idx]  # (Horizon, 10)
-            q_only = q_with_mean[:, 1:]  # (Horizon, 9)
-            forecasts.append(
-                TimesFMForecast(
-                    q_only.T,
-                    quantile_levels=quantile_levels,
-                )
-            )
 
         if use_val:
             print("    (No results saved - validation data used for hyperparameter selection)")
@@ -292,10 +227,9 @@ def run_timesfm_experiment(
                 "quantile_levels": quantile_levels,
             }
 
-            mock_predictor = MockPredictor(forecasts)
-            metadata = save_window_quantile_predictions(
+            metadata = save_window_predictions(
                 dataset=dataset,
-                predictor=mock_predictor,
+                fc_quantiles=fc_quantiles,
                 ds_config=ds_config,
                 output_base_dir=output_dir,
                 seasonality=season_length,
@@ -369,7 +303,6 @@ def main():
                 batch_size=args.batch_size,
                 context_length=args.context_length,
                 quantile_levels=args.quantiles,
-                cuda_device=args.cuda_device,
                 config_path=config_path,
                 use_val=args.val,
             )

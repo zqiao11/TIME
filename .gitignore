@@ -103,3 +103,4 @@ debug.py
 lightning_logs/
 timesfm/
 hf_models/
+experiments/Kairos/

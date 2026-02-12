@@ -12,10 +12,10 @@ import numpy as np
 def load_predictions(result_dir: str) -> dict:
     """
     Load predictions from a result directory.
-    
+
     Args:
         result_dir: Path to directory containing predictions.npz
-        
+
     Returns:
         Dictionary with keys:
             - predictions_mean: (num_series, num_windows, num_variates, pred_len)
@@ -36,10 +36,10 @@ def load_predictions(result_dir: str) -> dict:
 def load_metrics(result_dir: str) -> dict:
     """
     Load metrics from a result directory.
-    
+
     Args:
         result_dir: Path to directory containing metrics.npz
-        
+
     Returns:
         Dictionary of metric arrays, each with shape (num_series, num_windows, num_variates)
     """
@@ -51,10 +51,10 @@ def load_metrics(result_dir: str) -> dict:
 def load_metadata(result_dir: str) -> dict:
     """
     Load metadata from a result directory.
-    
+
     Args:
         result_dir: Path to directory containing metadata.json
-        
+
     Returns:
         Metadata dictionary
     """
@@ -70,7 +70,7 @@ def aggregate_metrics(
 ) -> dict:
     """
     Aggregate metrics across specified dimensions.
-    
+
     Args:
         metrics: Dictionary of metric arrays with shape (num_series, num_windows, num_variates)
         aggregation: Aggregation method ("mean", "median", "std", "min", "max")
@@ -80,7 +80,7 @@ def aggregate_metrics(
             - (2,): aggregate over variates
             - (0, 1): aggregate over series and windows
             - None: aggregate over all dimensions (returns scalar)
-        
+
     Returns:
         Dictionary of aggregated metric values
     """
@@ -91,33 +91,33 @@ def aggregate_metrics(
         "min": np.nanmin,
         "max": np.nanmax,
     }
-    
+
     if aggregation not in agg_funcs:
         raise ValueError(f"Unknown aggregation: {aggregation}. Must be one of {list(agg_funcs.keys())}")
-    
+
     agg_func = agg_funcs[aggregation]
-    
+
     return {name: agg_func(values, axis=axis) for name, values in metrics.items()}
 
 
 def find_result_dirs(base_dir: str, pattern: str = "*") -> list[str]:
     """
     Find all result directories matching a pattern.
-    
+
     Args:
         base_dir: Base directory to search
         pattern: Glob pattern for directory names
-        
+
     Returns:
         List of result directory paths
     """
     base_path = Path(base_dir)
     result_dirs = []
-    
+
     for path in base_path.glob(pattern):
         if path.is_dir() and (path / "metadata.json").exists():
             result_dirs.append(str(path))
-    
+
     return sorted(result_dirs)
 
 
@@ -128,17 +128,17 @@ def compare_models(
 ) -> dict[str, float]:
     """
     Compare multiple models on a specific metric.
-    
+
     Args:
         model_results: Dictionary mapping model names to result directories
         metric_name: Name of metric to compare
         aggregation: Aggregation method
-        
+
     Returns:
         Dictionary mapping model names to aggregated metric values
     """
     comparison = {}
-    
+
     for model_name, result_dir in model_results.items():
         metrics = load_metrics(result_dir)
         if metric_name in metrics:
@@ -146,8 +146,18 @@ def compare_models(
             comparison[model_name] = agg_metrics[metric_name]
         else:
             comparison[model_name] = np.nan
-    
+
     return comparison
 
 
-
+def get_available_terms(dataset_name: str, config: dict) -> list[str]:
+    """Get the terms that are actually defined in the config for a dataset."""
+    datasets_config = config.get("datasets", {})
+    if dataset_name not in datasets_config:
+        return []
+    dataset_config = datasets_config[dataset_name]
+    available_terms = []
+    for term in ["short", "medium", "long"]:
+        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
+            available_terms.append(term)
+    return available_terms
