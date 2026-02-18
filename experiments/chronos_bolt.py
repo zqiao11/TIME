@@ -36,32 +36,6 @@ from timebench.evaluation.data import (
 # Load environment variables
 load_dotenv()
 
-
-# ==========================================
-
-def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
-    series = series.astype(np.float32, copy=False)
-    if not np.isnan(series).any():
-        return series
-    idx = np.arange(series.shape[0])
-    mask = np.isfinite(series)
-    if mask.sum() == 0:
-        return np.nan_to_num(series, nan=0.0)
-    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
-    return series
-
-
-def _clean_nan_target(series: np.ndarray) -> np.ndarray:
-    if series.ndim == 1:
-        return _impute_nans_1d(series)
-    if series.ndim == 2:
-        cleaned = np.empty_like(series, dtype=np.float32)
-        for i in range(series.shape[0]):
-            cleaned[i] = _impute_nans_1d(series[i])
-        return cleaned
-    return np.nan_to_num(series, nan=0.0)
-
-
 class MultivariateForecast:
     """
     Adapts Chronos-Bolt quantiles to Timebench forecast API.
@@ -135,8 +109,6 @@ class ChronosBoltPredictor:
 
             if self.context_length is not None and target_np.shape[-1] > self.context_length:
                 target_np = target_np[..., -self.context_length:]
-
-            target_np = _clean_nan_target(target_np)
 
             num_vars = target_np.shape[0]
             for v in range(num_vars):
