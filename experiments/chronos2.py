@@ -179,7 +179,6 @@ def run_chronos2_experiment(
         pipeline = Chronos2Pipeline.from_pretrained(
             hf_model_path,
             device_map=device_map,
-            torch_dtype=torch.bfloat16,
         )
 
         # Dataset Initialization
@@ -354,7 +353,7 @@ def main():
         default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
         help="Quantile levels to predict",
     )
-    parser.add_argument("--context-length", type=int, default=4000,
+    parser.add_argument("--context-length", type=int, default=8192,
                         help="Maximum context length")
     parser.add_argument("--cuda-device", type=str, default="0",
                         help="CUDA device ID")
