@@ -40,29 +40,6 @@ from timebench.evaluation.data import (
 load_dotenv()
 
 
-def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
-    series = series.astype(np.float32, copy=False)
-    if not np.isnan(series).any():
-        return series
-    idx = np.arange(series.shape[0])
-    mask = np.isfinite(series)
-    if mask.sum() == 0:
-        return np.nan_to_num(series, nan=0.0)
-    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
-    return series
-
-
-def _clean_nan_target(series: np.ndarray) -> np.ndarray:
-    if series.ndim == 1:
-        return _impute_nans_1d(series)
-    if series.ndim == 2:
-        cleaned = np.empty_like(series, dtype=np.float32)
-        for i in range(series.shape[0]):
-            cleaned[i] = _impute_nans_1d(series[i])
-        return cleaned
-    return np.nan_to_num(series, nan=0.0)
-
-
 class TirexQuantileForecast:
     def __init__(self, quantiles, quantile_levels, mean=None):
         q_data = quantiles
@@ -123,18 +100,6 @@ class MockPredictor:
     def predict(self, dataset_input, **kwargs):
         return self.forecasts
 
-
-def _prepare_context(series, target_length):
-    """
-    Ensure series is exactly target_length for batching.
-    - If longer, crop to the last `target_length` points.
-    - If shorter, left-pad with zeros to target_length.
-    """
-    if series.shape[0] >= target_length:
-        return series[-target_length:]
-    pad_len = target_length - series.shape[0]
-    pad = np.zeros((pad_len,), dtype=series.dtype)
-    return np.concatenate([pad, series], axis=0)
 
 
 def _normalize_mean(mean, batch_size, prediction_length):
@@ -211,7 +176,6 @@ def run_tirex_experiment(
     model_id: str = "NX-AI/TiRex",
     output_dir: str | None = None,
     batch_size: int = 128,
-    context_length: int = 4000,
     cuda_device: str = "0",
     config_path: Path | None = None,
     use_val: bool = False,
@@ -244,7 +208,7 @@ def run_tirex_experiment(
     print(f"{'='*60}")
 
     print(f"  Loading TiRex model ({model_id})...")
-    model: ForecastModel = load_model(model_id)
+    model: ForecastModel = load_model(model_id, device="cuda")
     if hasattr(model, "to"):
         model = model.to(device)
 
@@ -313,14 +277,13 @@ def run_tirex_experiment(
         # 1. Collect all series and Pre-process (Pad/Crop)
         flat_contexts = []
         for entry in eval_data.input:
-            target = _clean_nan_target(np.asarray(entry["target"], dtype=np.float32))
+            target = np.asarray(entry["target"], dtype=np.float32)
             if target.ndim == 1:
                 series = target
             else:
                 series = target.squeeze()
 
             # Use strict context length for consistency
-            series = _prepare_context(series, context_length)
             flat_contexts.append(series)
 
         # 2. Batch Inference
@@ -330,14 +293,12 @@ def run_tirex_experiment(
             end = min(start + batch_size, total_items)
             batch = flat_contexts[start:end]
 
-            batch_tensor = torch.tensor(np.stack(batch), dtype=torch.float32, device=device)
-
             with torch.no_grad():
                 quantiles, mean = model.forecast(
-                    context=batch_tensor, prediction_length=prediction_length
+                    context=batch, prediction_length=prediction_length
                 )
 
-            batch_size_actual = batch_tensor.shape[0]
+            batch_size_actual = len(batch)
             mean_np = _normalize_mean(mean, batch_size_actual, prediction_length) if mean is not None else None
             quantiles_np = _normalize_quantiles(
                 quantiles, batch_size_actual, prediction_length
@@ -381,7 +342,6 @@ def run_tirex_experiment(
             ds_config = f"{dataset_name}/{term}"
             model_hyperparams = {
                 "model_id": model_id,
-                "context_length": context_length,
                 "quantile_levels": quantile_levels,
             }
 
@@ -492,7 +452,6 @@ def main():
                 model_id=model_id,
                 output_dir=args.output_dir,
                 batch_size=args.batch_size,
-                context_length=args.context_length,
                 cuda_device=args.cuda_device,
                 config_path=config_path,
                 use_val=args.val,
