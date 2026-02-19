@@ -104,3 +104,5 @@ lightning_logs/
 timesfm/
 hf_models/
 experiments/Kairos/
+granite-tsfm/
+local_tools/
