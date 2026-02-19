@@ -28,7 +28,9 @@ import timesfm
 from dotenv import load_dotenv
 from gluonts.time_feature import get_seasonality
 
-from timebench.evaluation.saver import save_window_quantile_predictions
+from timebench.evaluation.saver import save_window_predictions
+from timebench.evaluation.utils import get_available_terms
+
 from timebench.evaluation.data import (
     Dataset,
     get_dataset_settings,
@@ -38,82 +40,6 @@ from timebench.evaluation.data import (
 load_dotenv()
 
 DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-
-
-def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
-    series = series.astype(np.float32, copy=False)
-    if not np.isnan(series).any():
-        return series
-    idx = np.arange(series.shape[0])
-    mask = np.isfinite(series)
-    if mask.sum() == 0:
-        return np.nan_to_num(series, nan=0.0)
-    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
-    return series
-
-
-class TimesFMForecast:
-    """
-    Wrap TimesFM quantile outputs to match TimeBench Forecast interface.
-    """
-    def __init__(self, quantiles, mean, quantile_levels: list[float]):
-        q_data = np.asarray(quantiles, dtype=np.float32)
-        if q_data.ndim == 2:
-            if q_data.shape[0] != len(quantile_levels) and q_data.shape[1] == len(quantile_levels):
-                q_data = q_data.T
-            q_data = q_data[:, np.newaxis, :]
-        elif q_data.ndim != 3:
-            raise ValueError(f"Unexpected TimesFM quantile shape: {q_data.shape}")
-
-        self._quantiles = q_data
-        self._quantile_levels = [float(q) for q in quantile_levels]
-        self._samples = q_data
-        mean_arr = np.asarray(mean)
-        if mean_arr.ndim == 1:
-            mean_arr = mean_arr[np.newaxis, :]
-        self._mean = mean_arr
-
-    @property
-    def samples(self):
-        return self._samples
-
-    @property
-    def mean(self):
-        return self._mean
-
-    def quantile(self, q: float):
-        q_levels = np.asarray(self._quantile_levels, dtype=float)
-        matches = np.where(np.isclose(q_levels, q, atol=1e-6))[0]
-        if matches.size == 0:
-            raise ValueError(f"Quantile {q} not available. Supported: {self._quantile_levels}")
-        return self._quantiles[int(matches[0])]
-
-    def cpu(self):
-        return self
-
-
-class MockPredictor:
-    """
-    Wrap pre-computed forecasts to satisfy save_window_quantile_predictions interface.
-    """
-    def __init__(self, forecasts):
-        self.forecasts = forecasts
-
-    def predict(self, dataset_input, **kwargs):
-        return self.forecasts
-
-
-def get_available_terms(dataset_name: str, config: dict) -> list[str]:
-    """Get the terms that are actually defined in the config for a dataset."""
-    datasets_config = config.get("datasets", {})
-    if dataset_name not in datasets_config:
-        return []
-    dataset_config = datasets_config[dataset_name]
-    available_terms = []
-    for term in ["short", "medium", "long"]:
-        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
-            available_terms.append(term)
-    return available_terms
 
 
 def _get_model_config(model_size: str) -> dict:
@@ -143,16 +69,13 @@ def run_timesfm_experiment(
     input_patch_len: int = 32,
     output_patch_len: int = 128,
     hf_repo_id: str | None = None,
-    cuda_device: str = "0",
     config_path: Path | None = None,
-    use_val: bool = False,
     quantile_levels: list[float] | None = None,
     normalize_inputs: bool = True,
 ):
     """
     Run TimesFM-1.0 model inference on a dataset with specified terms.
     """
-    os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
     backend = "gpu" if torch.cuda.is_available() else "cpu"
 
     print("Loading configuration...")
@@ -168,7 +91,7 @@ def run_timesfm_experiment(
         quantile_levels = DEFAULT_QUANTILE_LEVELS
 
     if output_dir is None:
-        output_dir = f"./output/results/timesfm1.0_{model_size}"
+        output_dir = "./output/results/TimesFM-1.0-New"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -182,7 +105,6 @@ def run_timesfm_experiment(
     print(f"Dataset: {dataset_name}")
     print(f"Terms: {terms}")
     print(f"Backend: {backend}")
-    print(f"Evaluation on: {'Validation data (no saving)' if use_val else 'Test data'}")
     print(f"{'='*60}")
 
     for term in terms:
@@ -246,16 +168,10 @@ def run_timesfm_experiment(
             val_length=val_length,
         )
 
-        if use_val:
-            data_length = val_length
-            num_windows = dataset.val_windows
-            split_name = "Val split"
-            eval_data = dataset.val_data
-        else:
-            data_length = test_length
-            num_windows = dataset.windows
-            split_name = "Test split"
-            eval_data = dataset.test_data
+        data_length = test_length
+        num_windows = dataset.windows
+        split_name = "Test split"
+        eval_data = dataset.test_data
 
         print("  Dataset info:")
         print(f"    - Frequency: {dataset.freq}")
@@ -272,17 +188,12 @@ def run_timesfm_experiment(
         all_inputs = []
         for inp, _label in eval_data:
             history = inp["target"]
-            if history.ndim > 1:
-                history = history.squeeze()
-            if context_length is not None and history.shape[0] > context_length:
-                history = history[-context_length:]
-            history = _impute_nans_1d(np.asarray(history))
             all_inputs.append(history)
 
         num_total_instances = len(all_inputs)
         print(f"    Total instances to forecast: {num_total_instances}")
 
-        fc_means = []
+        # Initialize Results Lists
         fc_quantiles = []
 
         print(f"  Running predictions (Batch size: {batch_size})...")
@@ -297,60 +208,40 @@ def run_timesfm_experiment(
                 forecast_context_len=context_length,
                 normalize=normalize_inputs,
             )
-
-            fc_means.append(point_forecast)
-            fc_quantiles.append(quantile_forecast)
+            processed_quantile_forecast = quantile_forecast[:, :, 1:].transpose(0, 2, 1)
+            fc_quantiles.extend(list(processed_quantile_forecast))
 
             if (i + batch_size) % (batch_size * 10) == 0:
                 print(f"    Processed {i + batch_size}/{num_total_instances}...")
 
-        full_means = np.concatenate(fc_means, axis=0)
-        full_quantiles = np.concatenate(fc_quantiles, axis=0)
+        ds_config = f"{dataset_name}/{term}"
 
-        forecasts = []
-        for idx in range(num_total_instances):
-            q_with_mean = full_quantiles[idx]
-            q_only = q_with_mean[:, 1:]
-            forecasts.append(
-                TimesFMForecast(
-                    q_only.T,
-                    full_means[idx],
-                    quantile_levels=quantile_levels,
-                )
-            )
+        model_hyperparams = {
+            "model": "TimesFM-1.0-200M",
+            "context_length": context_length,
+            "horizon_len": prediction_length,
+            "input_patch_len": input_patch_len,
+            "output_patch_len": effective_output_patch_len,
+            "num_layers": model_cfg["num_layers"],
+            "model_dims": model_cfg["model_dims"],
+            "use_positional_embedding": model_cfg["use_positional_embedding"],
+            "backend": backend,
+            "output_type": "quantiles",
+            "quantile_levels": quantile_levels,
+            "normalize_inputs": normalize_inputs,
+        }
 
-        if use_val:
-            print("    (No results saved - validation data used for hyperparameter selection)")
-        else:
-            ds_config = f"{dataset_name}/{term}"
-
-            model_hyperparams = {
-                "model": "TimesFM-1.0-200M",
-                "context_length": context_length,
-                "horizon_len": prediction_length,
-                "input_patch_len": input_patch_len,
-                "output_patch_len": effective_output_patch_len,
-                "num_layers": model_cfg["num_layers"],
-                "model_dims": model_cfg["model_dims"],
-                "use_positional_embedding": model_cfg["use_positional_embedding"],
-                "backend": backend,
-                "output_type": "quantiles",
-                "quantile_levels": quantile_levels,
-                "normalize_inputs": normalize_inputs,
-            }
-
-            mock_predictor = MockPredictor(forecasts)
-            metadata = save_window_quantile_predictions(
-                dataset=dataset,
-                predictor=mock_predictor,
-                ds_config=ds_config,
-                output_base_dir=output_dir,
-                seasonality=season_length,
-                model_hyperparams=model_hyperparams,
-                quantile_levels=quantile_levels,
-            )
-            print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
-            print(f"  Output: {metadata.get('output_dir', output_dir)}")
+        metadata = save_window_predictions(
+            dataset=dataset,
+            fc_quantiles=fc_quantiles,
+            ds_config=ds_config,
+            output_base_dir=output_dir,
+            seasonality=season_length,
+            model_hyperparams=model_hyperparams,
+            quantile_levels=quantile_levels,
+        )
+        print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
+        print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
     print(f"\n{'='*60}")
     print("All experiments completed!")
@@ -389,12 +280,8 @@ def main():
         default=DEFAULT_QUANTILE_LEVELS,
         help="Quantile levels to predict",
     )
-    parser.add_argument("--cuda-device", type=str, default="0",
-                        help="CUDA device ID")
     parser.add_argument("--config", type=str, default=None,
                         help="Path to datasets.yaml config file")
-    parser.add_argument("--val", action="store_true",
-                        help="Evaluate on validation data")
 
     args = parser.parse_args()
 
@@ -426,9 +313,7 @@ def main():
                 output_patch_len=args.output_patch_len,
                 hf_repo_id=args.hf_repo,
                 quantile_levels=args.quantiles,
-                cuda_device=args.cuda_device,
                 config_path=config_path,
-                use_val=args.val,
             )
         except Exception as e:
             print(f"ERROR: Failed to run experiment for {dataset_name}: {e}")

@@ -8,7 +8,6 @@ Usage:
     python experiments/timesfm2.5.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/timesfm2.5.py --dataset "SG_Weather/D" --batch-size 32
     python experiments/timesfm2.5.py --dataset all_datasets  # Run all datasets from config
-    python experiments/timesfm2.5.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
@@ -21,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import numpy as np
 import torch
-import timesfm  # 引入 TimesFM
+import timesfm
 from dotenv import load_dotenv
 from gluonts.time_feature import get_seasonality
 
@@ -40,19 +39,6 @@ load_dotenv()
 DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
 
-def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
-    series = series.astype(np.float32, copy=False)
-    if not np.isnan(series).any():
-        return series
-    idx = np.arange(series.shape[0])
-    mask = np.isfinite(series)
-    if mask.sum() == 0:
-        return np.nan_to_num(series, nan=0.0)
-    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
-    return series
-
-
-
 def run_timesfm_experiment(
     dataset_name: str,
     terms: list[str] = None,
@@ -61,7 +47,6 @@ def run_timesfm_experiment(
     batch_size: int = 32,
     context_length: int = 1024,
     config_path: Path | None = None,
-    use_val: bool = False,
     quantile_levels: list[float] | None = None,
     use_continuous_quantile_head: bool = True,
     force_flip_invariance: bool = True,
@@ -84,7 +69,7 @@ def run_timesfm_experiment(
         quantile_levels = DEFAULT_QUANTILE_LEVELS
 
     if output_dir is None:
-        output_dir = "./output/results/TimesFM-2.5"
+        output_dir = "./output/results/TimesFM-2.5-New"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -92,7 +77,6 @@ def run_timesfm_experiment(
     print(f"Dataset: {dataset_name}")
     print(f"Terms: {terms}")
     print(f"Device: {device}")
-    print(f"Evaluation on: {'Validation data (no saving)' if use_val else 'Test data'}")
     print(f"{'='*60}")
 
     model_map = {
@@ -151,16 +135,10 @@ def run_timesfm_experiment(
         )
 
         # Calculate actual test/val length
-        if use_val:
-            data_length = val_length
-            num_windows = dataset.val_windows
-            split_name = "Val split"
-            eval_data = dataset.val_data
-        else:
-            data_length = test_length
-            num_windows = dataset.windows
-            split_name = "Test split"
-            eval_data = dataset.test_data
+        data_length = test_length
+        num_windows = dataset.windows
+        split_name = "Test split"
+        eval_data = dataset.test_data
 
         print("  Dataset info:")
         print(f"    - Frequency: {dataset.freq}")
@@ -182,10 +160,6 @@ def run_timesfm_experiment(
         for inp, label in eval_data:
             # TimesFM expects 1D numpy arrays for univariate
             history = inp["target"]
-            # if context_length is not None and history.shape[0] > context_length:
-            #     history = history[-context_length:]
-            # history = _impute_nans_1d(np.asarray(history))
-
             all_inputs.append(history)
             all_ground_truths.append(label["target"])
 
@@ -214,30 +188,27 @@ def run_timesfm_experiment(
             if (i + batch_size) % (batch_size * 10) == 0:
                 print(f"    Processed {i + batch_size}/{num_total_instances}...")
 
-        if use_val:
-            print("    (No results saved - validation data used for hyperparameter selection)")
-        else:
-            ds_config = f"{dataset_name}/{term}"
+        ds_config = f"{dataset_name}/{term}"
 
-            model_hyperparams = {
-                "model": "TimesFM-2.5-200M",
-                "context_length": context_length,
-                "force_flip_invariance": force_flip_invariance,
-                "output_type": "quantiles",
-                "quantile_levels": quantile_levels,
-            }
+        model_hyperparams = {
+            "model": "TimesFM-2.5-200M",
+            "context_length": context_length,
+            "force_flip_invariance": force_flip_invariance,
+            "output_type": "quantiles",
+            "quantile_levels": quantile_levels,
+        }
 
-            metadata = save_window_predictions(
-                dataset=dataset,
-                fc_quantiles=fc_quantiles,
-                ds_config=ds_config,
-                output_base_dir=output_dir,
-                seasonality=season_length,
-                model_hyperparams=model_hyperparams,
-                quantile_levels=quantile_levels,
-            )
-            print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
-            print(f"  Output: {metadata.get('output_dir', output_dir)}")
+        metadata = save_window_predictions(
+            dataset=dataset,
+            fc_quantiles=fc_quantiles,
+            ds_config=ds_config,
+            output_base_dir=output_dir,
+            seasonality=season_length,
+            model_hyperparams=model_hyperparams,
+            quantile_levels=quantile_levels,
+        )
+        print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
+        print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
     print(f"\n{'='*60}")
     print("All experiments completed!")
@@ -268,12 +239,8 @@ def main():
         default=DEFAULT_QUANTILE_LEVELS,
         help="Quantile levels to predict",
     )
-    parser.add_argument("--cuda-device", type=str, default="0",
-                        help="CUDA device ID")
     parser.add_argument("--config", type=str, default=None,
                         help="Path to datasets.yaml config file")
-    parser.add_argument("--val", action="store_true",
-                        help="Evaluate on validation data")
 
     args = parser.parse_args()
 
@@ -304,7 +271,6 @@ def main():
                 context_length=args.context_length,
                 quantile_levels=args.quantiles,
                 config_path=config_path,
-                use_val=args.val,
             )
         except Exception as e:
             print(f"ERROR: Failed to run experiment for {dataset_name}: {e}")
