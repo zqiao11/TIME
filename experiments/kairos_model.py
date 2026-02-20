@@ -8,14 +8,13 @@ Usage:
     python experiments/kairos_model.py --dataset "SG_Weather/D" --terms short medium long
     python experiments/kairos_model.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/kairos_model.py --dataset all_datasets  # Run all datasets from config
-    python experiments/kairos_model.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
 import os
 import sys
-from pathlib import Path
 import traceback
+from pathlib import Path
 
 # Ensure timebench is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -32,155 +31,32 @@ from gluonts.time_feature import get_seasonality
 
 from tsfm.model.kairos import AutoModel
 
-from timebench.evaluation.saver import save_window_quantile_predictions
+from timebench.evaluation.saver import save_window_predictions
 from timebench.evaluation.data import (
     Dataset,
     get_dataset_settings,
     load_dataset_config,
 )
+from timebench.evaluation.utils import get_available_terms
 
 load_dotenv()
 
-
-def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
-    series = series.astype(np.float32, copy=False)
-    if not np.isnan(series).any():
-        return series
-    idx = np.arange(series.shape[0])
-    mask = np.isfinite(series)
-    if mask.sum() == 0:
-        return np.nan_to_num(series, nan=0.0)
-    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
-    return series
+DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
 
-def _clean_nan_target(series: np.ndarray) -> np.ndarray:
-    if series.ndim == 1:
-        return _impute_nans_1d(series)
-    if series.ndim == 2:
-        cleaned = np.empty_like(series, dtype=np.float32)
-        for i in range(series.shape[0]):
-            cleaned[i] = _impute_nans_1d(series[i])
-        return cleaned
-    return np.nan_to_num(series, nan=0.0)
-
-
-def _prepare_context(series, target_length, pad_value=float('nan')):
-    """
-    Pads or truncates a series on the left to a specified target_length.
-
-    Args:
-        series: The input sequence (tensor, list, or np.ndarray).
-        target_length (int): The target length.
-        pad_value (float): The value to use for padding, defaults to NaN.
-
-    Returns:
-        torch.Tensor: A tensor of length target_length.
-    """
+def _prepare_context(series, target_length):
     if isinstance(series, torch.Tensor):
         series_t = series.float()
     else:
         series_t = torch.tensor(series, dtype=torch.float32)
 
-    current_length = series_t.shape[-1]
-
-    if current_length < target_length:
-        # Pad on the left
-        padding_size = target_length - current_length
-        # F.pad format: (left, right) for 1D, applied to last dimension
-        return torch.nn.functional.pad(series_t, (padding_size, 0), mode='constant', value=pad_value)
-    else:
-        # Truncate to the last target_length elements
+    if series_t.shape[-1] >= target_length:
         return series_t[..., -target_length:]
 
+    pad_len = target_length - series_t.shape[-1]
+    pad = torch.zeros((*series_t.shape[:-1], pad_len), dtype=series_t.dtype)
+    return torch.cat([pad, series_t], dim=-1)
 
-def _normalize_quantile_output(quantiles: np.ndarray, prediction_length: int) -> np.ndarray:
-    q_data = quantiles
-    if isinstance(q_data, torch.Tensor):
-        q_data = q_data.detach().cpu().float().numpy()
-    q = np.asarray(q_data)
-    if q.ndim != 3:
-        raise ValueError(f"Unexpected quantile output shape: {q.shape}")
-    if q.shape[2] == prediction_length:
-        return q
-    if q.shape[1] == prediction_length:
-        return q.transpose(0, 2, 1)
-    raise ValueError(
-        "Quantile output length mismatch: "
-        f"expected {prediction_length}, got {q.shape}"
-    )
-
-
-def _resolve_quantile_levels(num_quantiles: int, quantile_levels: list[float] | None) -> list[float]:
-    if quantile_levels is None or len(quantile_levels) != num_quantiles:
-        quantile_levels = np.linspace(0.1, 0.9, num_quantiles)
-    return [float(q) for q in quantile_levels]
-
-
-class KairosForecast:
-    def __init__(self, quantiles, quantile_levels):
-        q_data = quantiles
-        if isinstance(q_data, torch.Tensor):
-            q_data = q_data.detach().cpu().float().numpy()
-        q_data = np.asarray(q_data, dtype=np.float32)
-
-        levels = [float(q) for q in quantile_levels]
-        num_levels = len(levels)
-        if q_data.ndim == 2:
-            q_data = q_data[:, np.newaxis, :]
-        elif q_data.ndim == 3:
-            if q_data.shape[0] != num_levels and q_data.shape[1] == num_levels:
-                q_data = q_data.transpose(1, 0, 2)
-        else:
-            raise ValueError(f"Unexpected quantile shape: {q_data.shape}")
-
-        self._quantiles = q_data
-        self._quantile_levels = levels
-        if 0.5 in self._quantile_levels:
-            idx = int(np.where(np.isclose(self._quantile_levels, 0.5, atol=1e-6))[0][0])
-            self._mean = self._quantiles[idx]
-        else:
-            self._mean = np.mean(self._quantiles, axis=0)
-
-    @property
-    def mean(self):
-        return self._mean
-
-    @property
-    def quantile_levels(self):
-        return self._quantile_levels
-
-    def quantile(self, q: float):
-        q_levels = np.asarray(self._quantile_levels, dtype=float)
-        matches = np.where(np.isclose(q_levels, q, atol=1e-6))[0]
-        if matches.size == 0:
-            raise ValueError(f"Quantile {q} not available. Supported: {self._quantile_levels}")
-        return self._quantiles[int(matches[0])]
-
-    def cpu(self):
-        return self
-
-
-class MockPredictor:
-    def __init__(self, forecasts):
-        self.forecasts = forecasts
-
-    def predict(self, dataset_input, **kwargs):
-        return self.forecasts
-
-
-
-def get_available_terms(dataset_name: str, config: dict) -> list[str]:
-    """Get the terms that are actually defined in the config for a dataset."""
-    datasets_config = config.get("datasets", {})
-    if dataset_name not in datasets_config:
-        return []
-    dataset_config = datasets_config[dataset_name]
-    available_terms = []
-    for term in ["short", "medium", "long"]:
-        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
-            available_terms.append(term)
-    return available_terms
 
 def run_kairos_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
@@ -189,18 +65,14 @@ def run_kairos_experiment(
     output_dir: str | None = None,
     batch_size: int = 16,
     context_length: int = 2048,
-    cuda_device: str = "0",
     config_path: Path | None = None,
-    use_val: bool = False,
-    quantile_levels: list[float] | None = None,
+    quantile_levels: list[float] = DEFAULT_QUANTILE_LEVELS,
 ):
-    os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
-    # Auto-detect available terms from config if not specified
     if terms is None:
         terms = get_available_terms(dataset_name, config)
         if not terms:
@@ -216,18 +88,12 @@ def run_kairos_experiment(
     print(f"Dataset: {dataset_name}")
     print(f"Model: {model_id}")
     print(f"Terms: {terms}")
-    print(f"Evaluation on: {'Validation data (no saving)' if use_val else 'Test data'}")
     print(f"{'='*60}")
 
     print(f"  Loading Kairos model ({model_id})...")
     model = AutoModel.from_pretrained(model_id, trust_remote_code=True)
-    if hasattr(model, "to"):
-        model = model.to(device)
-    if hasattr(model, "eval"):
-        model.eval()
-
-    if quantile_levels is None:
-        quantile_levels = getattr(getattr(model, "config", None), "quantiles", None)
+    model = model.to(device)
+    model.eval()
 
     for term in terms:
         print(f"\n--- Term: {term} ---")
@@ -238,7 +104,11 @@ def run_kairos_experiment(
 
         print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
-        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
+        to_univariate = (
+            False
+            if Dataset(name=dataset_name, term=term, to_univariate=False).target_dim == 1
+            else True
+        )
         dataset = Dataset(
             name=dataset_name,
             term=term,
@@ -248,33 +118,31 @@ def run_kairos_experiment(
             val_length=val_length,
         )
 
-        if use_val:
-            data_length = val_length
-            num_windows = dataset.val_windows
-            split_name = "Val split"
-            eval_data = dataset.val_data
-        else:
-            data_length = test_length
-            num_windows = dataset.windows
-            split_name = "Test split"
-            eval_data = dataset.test_data
+        data_length = test_length
+        num_windows = dataset.windows
+        split_name = "Test split"
+        eval_data = dataset.test_data
 
         print("  Dataset info:")
         print(f"    - Frequency: {dataset.freq}")
         print(f"    - Num series: {len(dataset.hf_dataset)}")
         print(f"    - Target dim: {dataset.target_dim}")
-        print(f"    - Series length: min={dataset._min_series_length}, max={dataset._max_series_length}, avg={dataset._avg_series_length:.1f}")
+        print(
+            "    - Series length: "
+            f"min={dataset._min_series_length}, "
+            f"max={dataset._max_series_length}, "
+            f"avg={dataset._avg_series_length:.1f}"
+        )
         print(f"    - {split_name}: {data_length} steps")
         print(f"    - Prediction length: {dataset.prediction_length}")
         print(f"    - Windows: {num_windows}")
 
         season_length = get_seasonality(dataset.freq)
 
-        forecasts = []
         all_inputs = []
         print("  Preparing input batches...")
         for item in eval_data.input:
-            target = _clean_nan_target(np.asarray(item["target"]))
+            target = np.asarray(item["target"], dtype=np.float32)
 
             if dataset.target_dim > 1 and target.ndim == 2:
                 for v in range(target.shape[0]):
@@ -303,10 +171,7 @@ def run_kairos_experiment(
                     preserve_positivity=True,
                     average_with_flipped_input=True,
                 )
-                quantiles = outputs.get("prediction_outputs")
-                if quantiles is None:
-                    raise ValueError("Kairos output missing 'prediction_outputs'")
-                quantiles = _normalize_quantile_output(quantiles, prediction_length)
+                quantiles = outputs["prediction_outputs"].detach().cpu().float().numpy()
                 raw_predictions.append(quantiles)
 
                 if start % (batch_size * 5) == 0:
@@ -314,58 +179,32 @@ def run_kairos_experiment(
                     sys.stdout.flush()
         print(f"\r    Processed {total_items}/{total_items} items. Done.")
 
-        flat_preds = np.concatenate(raw_predictions, axis=0) if raw_predictions else np.empty((0, 0, 0))
-        if flat_preds.size == 0:
-            raise ValueError("No predictions were generated.")
+        flat_preds = np.concatenate(raw_predictions, axis=0)
 
-        quantile_levels = _resolve_quantile_levels(flat_preds.shape[1], quantile_levels)
-
-        num_instances = len(eval_data.input)
-        if to_univariate:
-            for idx in range(num_instances):
-                q_stack = flat_preds[idx][:, np.newaxis, :]
-                forecasts.append(KairosForecast(q_stack, quantile_levels))
-        else:
-            current_idx = 0
-            vars_per_instance = dataset.target_dim
-
-            for _ in range(num_instances):
-                instance_chunk = flat_preds[current_idx: current_idx + vars_per_instance]
-                current_idx += vars_per_instance
-
-                if vars_per_instance == 1:
-                    q_stack = instance_chunk[0][:, np.newaxis, :]
-                else:
-                    q_stack = np.transpose(instance_chunk, (1, 0, 2))
-
-                forecasts.append(KairosForecast(q_stack, quantile_levels))
-
-        num_total_instances = len(forecasts)
+        fc_quantiles = flat_preds.astype(np.float32, copy=False)
+        num_total_instances = fc_quantiles.shape[0]
         num_series = num_total_instances // num_windows
-        print(f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}")
+        print(
+            f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}"
+        )
+        ds_config = f"{dataset_name}/{term}"
+        model_hyperparams = {
+            "model_id": model_id,
+            "context_length": context_length,
+            "quantile_levels": quantile_levels,
+        }
 
-        if use_val:
-            print("    (No results saved - validation data used for hyperparameter selection)")
-        else:
-            ds_config = f"{dataset_name}/{term}"
-            model_hyperparams = {
-                "model_id": model_id,
-                "context_length": context_length,
-                "quantile_levels": quantile_levels,
-            }
-
-            predictor = MockPredictor(forecasts)
-            metadata = save_window_quantile_predictions(
-                dataset=dataset,
-                predictor=predictor,
-                ds_config=ds_config,
-                output_base_dir=output_dir,
-                seasonality=season_length,
-                model_hyperparams=model_hyperparams,
-                quantile_levels=quantile_levels,
-            )
-            print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
-            print(f"  Output: {metadata.get('output_dir', output_dir)}")
+        metadata = save_window_predictions(
+            dataset=dataset,
+            fc_quantiles=fc_quantiles,
+            ds_config=ds_config,
+            output_base_dir=output_dir,
+            seasonality=season_length,
+            model_hyperparams=model_hyperparams,
+            quantile_levels=quantile_levels,
+        )
+        print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
+        print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
     print(f"\n{'='*60}")
     print("All experiments completed!")
@@ -375,30 +214,65 @@ def run_kairos_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Kairos experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
-                        help="Dataset name(s). 'all_datasets' for all.")
-    parser.add_argument("--terms", type=str, nargs="+", default=None,
-                        choices=["short", "medium", "long"],
-                        help="Terms to evaluate. If not specified, auto-detect from config.")
-    parser.add_argument("--model-size", type=str, default="base",
-                        choices=["small", "base", "large", "10m", "23m", "50m"],
-                        help="Kairos model size (maps to HF ID)")
-    parser.add_argument("--model-id", type=str, default=None,
-                        help="Kairos model HF ID (overrides --model-size)")
-    parser.add_argument("--output-dir", type=str, default=None,
-                        help="Output directory for results")
-    parser.add_argument("--batch-size", type=int, default=16,
-                        help="Batch size for prediction")
-    parser.add_argument("--context-length", type=int, default=2048,
-                        help="Maximum context length")
-    parser.add_argument("--cuda-device", type=str, default="0",
-                        help="CUDA device ID")
-    parser.add_argument("--config", type=str, default=None,
-                        help="Path to datasets.yaml config file")
-    parser.add_argument("--val", action="store_true",
-                        help="Evaluate on validation data (no saving)")
-    parser.add_argument("--quantiles", type=float, nargs="+", default=None,
-                        help="Override quantile levels (must match model output)")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        nargs="+",
+        default=["SG_Weather/D"],
+        help="Dataset name(s). 'all_datasets' for all.",
+    )
+    parser.add_argument(
+        "--terms",
+        type=str,
+        nargs="+",
+        default=None,
+        choices=["short", "medium", "long"],
+        help="Terms to evaluate. If not specified, auto-detect from config.",
+    )
+    parser.add_argument(
+        "--model-size",
+        type=str,
+        default="base",
+        choices=["small", "base", "large", "10m", "23m", "50m"],
+        help="Kairos model size (maps to HF ID)",
+    )
+    parser.add_argument(
+        "--model-id",
+        type=str,
+        default=None,
+        help="Kairos model HF ID (overrides --model-size)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Output directory for results",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+        help="Batch size for prediction",
+    )
+    parser.add_argument(
+        "--context-length",
+        type=int,
+        default=2048,
+        help="Maximum context length",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to datasets.yaml config file",
+    )
+    parser.add_argument(
+        "--quantiles",
+        type=float,
+        nargs="+",
+        default=DEFAULT_QUANTILE_LEVELS,
+        help="Override quantile levels (must match model output)",
+    )
 
     args = parser.parse_args()
     config_path = Path(args.config) if args.config else None
@@ -439,9 +313,7 @@ def main():
                 output_dir=args.output_dir,
                 batch_size=args.batch_size,
                 context_length=args.context_length,
-                cuda_device=args.cuda_device,
                 config_path=config_path,
-                use_val=args.val,
                 quantile_levels=args.quantiles,
             )
         except Exception as exc:

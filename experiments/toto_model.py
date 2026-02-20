@@ -14,13 +14,14 @@ Usage:
 import argparse
 import os
 import sys
-from pathlib import Path
 import traceback
+from pathlib import Path
 
 # Ensure timebench is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import numpy as np
+import pandas as pd
 import torch
 from dotenv import load_dotenv
 from gluonts.time_feature import get_seasonality
@@ -32,57 +33,60 @@ from toto.model.toto import Toto
 
 from timebench.evaluation import save_window_predictions
 from timebench.evaluation.data import Dataset, get_dataset_settings, load_dataset_config
+from timebench.evaluation.utils import get_available_terms
 
-# Load environment variables
 load_dotenv()
 
-
-def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
-    series = series.astype(np.float32, copy=False)
-    if not np.isnan(series).any():
-        return series
-    idx = np.arange(series.shape[0])
-    mask = np.isfinite(series)
-    if mask.sum() == 0:
-        return np.nan_to_num(series, nan=0.0)
-    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
-    return series
+DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
 
-def _clean_nan_target(series: np.ndarray) -> np.ndarray:
+def _prepare_series(
+    series: np.ndarray, context_length: int | None
+) -> tuple[np.ndarray, np.ndarray]:
     if series.ndim == 1:
-        return _impute_nans_1d(series)
-    if series.ndim == 2:
-        cleaned = np.empty_like(series, dtype=np.float32)
-        for i in range(series.shape[0]):
-            cleaned[i] = _impute_nans_1d(series[i])
-        return cleaned
-    return np.nan_to_num(series, nan=0.0)
+        series = series[np.newaxis, :]
+    series = np.nan_to_num(series, nan=0.0)
+
+    if context_length is None:
+        padding_mask = np.ones_like(series, dtype=bool)
+        return series, padding_mask
+
+    if series.shape[-1] > context_length:
+        series = series[..., -context_length:]
+        padding_mask = np.ones_like(series, dtype=bool)
+        return series, padding_mask
+
+    if series.shape[-1] < context_length:
+        pad_len = context_length - series.shape[-1]
+        pad = np.zeros((series.shape[0], pad_len), dtype=series.dtype)
+        series = np.concatenate([pad, series], axis=-1)
+        pad_mask = np.zeros((series.shape[0], pad_len), dtype=bool)
+        data_mask = np.ones((series.shape[0], series.shape[-1] - pad_len), dtype=bool)
+        padding_mask = np.concatenate([pad_mask, data_mask], axis=-1)
+        return series, padding_mask
+
+    padding_mask = np.ones_like(series, dtype=bool)
+    return series, padding_mask
 
 
 def _freq_to_seconds(freq: str) -> float:
     try:
-        offset = to_offset(freq)
-        if getattr(offset, "delta", None) is not None:
-            return float(offset.delta.total_seconds())
+        offset = to_offset(freq.lower())
+        return float(pd.Timedelta(offset).total_seconds())
     except Exception:
-        pass
-    return 0.0
+        return 0.0
 
 
-def _prepare_series(series: np.ndarray, context_length: int | None) -> np.ndarray:
-    if series.ndim == 1:
-        series = series[np.newaxis, :]
-    if context_length is not None and series.shape[-1] > context_length:
-        series = series[..., -context_length:]
-    return series
-
-
-def _build_masked_timeseries(series: np.ndarray, device: str, interval_seconds: float) -> MaskedTimeseries:
+def _build_masked_timeseries(
+    series: np.ndarray,
+    padding_mask: np.ndarray,
+    device: str,
+    interval_seconds: float,
+) -> MaskedTimeseries:
     series_t = torch.as_tensor(series, dtype=torch.float32, device=device)
-    padding_mask = torch.ones_like(series_t, dtype=torch.bool)
+    padding_mask_t = torch.as_tensor(padding_mask, dtype=torch.bool, device=device)
     id_mask = torch.zeros_like(series_t)
-    timestamp_seconds = torch.zeros_like(series_t)
+    timestamp_seconds = torch.zeros(series_t.shape, dtype=torch.float32, device=device)
     time_interval_seconds = torch.full(
         (series_t.shape[0],),
         interval_seconds,
@@ -91,142 +95,12 @@ def _build_masked_timeseries(series: np.ndarray, device: str, interval_seconds: 
     )
     return MaskedTimeseries(
         series=series_t,
-        padding_mask=padding_mask,
+        padding_mask=padding_mask_t,
         id_mask=id_mask,
         timestamp_seconds=timestamp_seconds,
         time_interval_seconds=time_interval_seconds,
     )
 
-
-def _normalize_samples(samples: np.ndarray, prediction_length: int, num_variates: int) -> np.ndarray:
-    if isinstance(samples, (list, tuple)):
-        if len(samples) == 0:
-            raise ValueError("Toto returned empty samples list.")
-        elems = []
-        for s in samples:
-            if isinstance(s, torch.Tensor):
-                elems.append(s.detach().cpu().numpy())
-            else:
-                elems.append(np.asarray(s))
-        if len(elems) == 1 and elems[0].ndim >= 2:
-            samples = elems[0]
-        else:
-            first = elems[0]
-            try:
-                if first.ndim == 1:
-                    samples = np.stack(elems, axis=0)
-                elif first.ndim == 2 and len(elems) == num_variates and first.shape[1] == prediction_length:
-                    samples = np.stack(elems, axis=1)
-                elif first.ndim == 2 and len(elems) == num_variates and first.shape[0] == prediction_length:
-                    samples = np.stack(elems, axis=1).transpose(2, 1, 0)
-                else:
-                    samples = np.stack(elems, axis=0)
-            except ValueError as exc:
-                raise ValueError(f"Toto samples list has inconsistent shapes: {exc}") from exc
-
-    if isinstance(samples, torch.Tensor):
-        samples = samples.detach().cpu().numpy()
-    else:
-        samples = np.asarray(samples)
-
-    if samples.dtype == object:
-        samples = np.stack([np.asarray(s) for s in samples], axis=0)
-
-    if samples.ndim == 4:
-        # Demo output: (batch, variates, pred_len, num_samples)
-        if samples.shape[0] == 1:
-            samples = samples.squeeze(0)
-        else:
-            raise ValueError(f"Unexpected Toto batch dimension: {samples.shape}")
-
-    if samples.ndim == 3:
-        # (variates, pred_len, num_samples) -> (num_samples, variates, pred_len)
-        if samples.shape[0] == num_variates and samples.shape[1] == prediction_length:
-            return samples.transpose(2, 0, 1)
-        # (variates, num_samples, pred_len) -> (num_samples, variates, pred_len)
-        if samples.shape[0] == num_variates and samples.shape[2] == prediction_length:
-            return samples.transpose(1, 0, 2)
-        # (pred_len, variates, num_samples) -> (num_samples, variates, pred_len)
-        if samples.shape[0] == prediction_length and samples.shape[1] == num_variates:
-            return samples.transpose(2, 1, 0)
-        # (pred_len, num_samples, variates) -> (num_samples, variates, pred_len)
-        if samples.shape[0] == prediction_length and samples.shape[2] == num_variates:
-            return samples.transpose(1, 2, 0)
-        # (num_samples, variates, pred_len)
-        if samples.shape[1] == num_variates and samples.shape[2] == prediction_length:
-            return samples
-        # (num_samples, pred_len, variates) -> (num_samples, variates, pred_len)
-        if samples.shape[1] == prediction_length and samples.shape[2] == num_variates:
-            return samples.transpose(0, 2, 1)
-
-    if samples.ndim > 3:
-        squeezed = np.squeeze(samples)
-        if squeezed.ndim <= 3:
-            samples = squeezed
-        else:
-            raise ValueError(f"Unexpected Toto samples shape: {samples.shape}")
-
-    if samples.ndim == 2:
-        if samples.shape[1] != prediction_length:
-            raise ValueError("Unexpected Toto samples shape for univariate output.")
-        return samples[:, np.newaxis, :]
-
-    if samples.ndim != 3:
-        raise ValueError("Unexpected Toto samples shape; expected 2D or 3D tensor.")
-
-    raise ValueError(
-        f"Unexpected Toto samples shape: {samples.shape}, "
-        f"prediction_length={prediction_length}, num_variates={num_variates}"
-    )
-
-
-def _coerce_num_samples(samples: np.ndarray, target_num_samples: int) -> np.ndarray:
-    if samples.shape[0] == target_num_samples:
-        return samples
-    if samples.shape[0] > target_num_samples:
-        return samples[:target_num_samples]
-    pad_count = target_num_samples - samples.shape[0]
-    pad = np.repeat(samples[-1:], pad_count, axis=0)
-    return np.concatenate([samples, pad], axis=0)
-
-
-class TotoForecast:
-    def __init__(self, samples: np.ndarray):
-        self._samples = samples
-        self._mean = np.mean(samples, axis=0)
-
-    @property
-    def samples(self):
-        return self._samples
-
-    @property
-    def mean(self):
-        return self._mean
-
-    def cpu(self):
-        return self
-
-
-class MockPredictor:
-    def __init__(self, forecasts):
-        self.forecasts = forecasts
-
-    def predict(self, dataset_input, **kwargs):
-        return self.forecasts
-
-
-
-def get_available_terms(dataset_name: str, config: dict) -> list[str]:
-    """Get the terms that are actually defined in the config for a dataset."""
-    datasets_config = config.get("datasets", {})
-    if dataset_name not in datasets_config:
-        return []
-    dataset_config = datasets_config[dataset_name]
-    available_terms = []
-    for term in ["short", "medium", "long"]:
-        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
-            available_terms.append(term)
-    return available_terms
 
 def run_toto_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
@@ -236,21 +110,15 @@ def run_toto_experiment(
     num_samples: int = 100,
     samples_per_batch: int = 100,
     context_length: int = 4000,
-    cuda_device: str = "0",
     config_path: Path | None = None,
-    use_val: bool = False,
     compile_model: bool = True,
+    quantile_levels: list[float] = DEFAULT_QUANTILE_LEVELS,
 ):
-    """
-    Run Toto model experiments on a dataset with specified terms.
-    """
-    os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
-    # Auto-detect available terms from config if not specified
     if terms is None:
         terms = get_available_terms(dataset_name, config)
         if not terms:
@@ -265,7 +133,6 @@ def run_toto_experiment(
     print(f"Dataset: {dataset_name}")
     print(f"Model: {model_id}")
     print(f"Device: {device}")
-    print(f"Evaluation on: {'Validation data (no saving)' if use_val else 'Test data'}")
     print(f"{'='*60}")
 
     print(f"  Initializing Toto model ({model_id})...")
@@ -288,7 +155,10 @@ def run_toto_experiment(
         test_length = settings.get("test_length")
         val_length = settings.get("val_length")
 
-        print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
+        print(
+            "  Config: prediction_length="
+            f"{prediction_length}, test_length={test_length}, val_length={val_length}"
+        )
 
         dataset = Dataset(
             name=dataset_name,
@@ -299,39 +169,39 @@ def run_toto_experiment(
             val_length=val_length,
         )
 
-        if use_val:
-            data_length = val_length
-            num_windows = dataset.val_windows
-            split_name = "Val split"
-            eval_data = dataset.val_data
-        else:
-            data_length = test_length
-            num_windows = dataset.windows
-            split_name = "Test split"
-            eval_data = dataset.test_data
+        data_length = test_length
+        num_windows = dataset.windows
+        split_name = "Test split"
+        eval_data = dataset.test_data
 
         print("  Dataset info:")
         print(f"    - Frequency: {dataset.freq}")
         print(f"    - Num series: {len(dataset.hf_dataset)}")
         print(f"    - Target dim: {dataset.target_dim}")
-        print(f"    - Series length: min={dataset._min_series_length}, max={dataset._max_series_length}, avg={dataset._avg_series_length:.1f}")
+        print(
+            "    - Series length: "
+            f"min={dataset._min_series_length}, "
+            f"max={dataset._max_series_length}, "
+            f"avg={dataset._avg_series_length:.1f}"
+        )
         print(f"    - {split_name}: {data_length} steps")
         print(f"    - Prediction length: {dataset.prediction_length}")
         print(f"    - Windows: {num_windows}")
 
-        season_length = get_seasonality(dataset.freq)
-        interval_seconds = _freq_to_seconds(dataset.freq)
+        freq = dataset.freq.lower()
+        season_length = get_seasonality(freq)
+        interval_seconds = _freq_to_seconds(freq)
 
         print(f"  Running predictions on {split_name.lower()} data...")
-        forecasts = []
+        fc_quantiles = []
 
         with torch.no_grad():
             for idx, item in enumerate(eval_data.input, 1):
                 target = np.asarray(item["target"])
-                target = _prepare_series(target, context_length)
-                target = _clean_nan_target(target)
-
-                inputs = _build_masked_timeseries(target, device, interval_seconds)
+                target, padding_mask = _prepare_series(target, context_length)
+                inputs = _build_masked_timeseries(
+                    target, padding_mask, device, interval_seconds
+                )
 
                 fc = forecaster.forecast(
                     inputs,
@@ -340,15 +210,12 @@ def run_toto_experiment(
                     samples_per_batch=samples_per_batch,
                 )
 
-                samples = fc.samples
-                if isinstance(samples, torch.Tensor):
-                    samples = samples.detach().cpu().numpy()
-                samples = np.asarray(samples)
+                q_preds = []
+                for q in quantile_levels:
+                    q_pred = fc.quantile(q).detach().cpu().numpy()[0]
+                    q_preds.append(q_pred)
 
-                samples = _normalize_samples(samples, prediction_length, dataset.target_dim)
-                samples = _coerce_num_samples(samples, 100)
-
-                forecasts.append(TotoForecast(samples))
+                fc_quantiles.append(np.stack(q_preds, axis=0))
 
                 # Clear GPU cache to reduce memory fragmentation
                 if device == "cuda":
@@ -357,12 +224,8 @@ def run_toto_experiment(
                 if idx % 100 == 0:
                     print(f"    Processed {idx} windows")
 
-        if use_val:
-            print("    (No results saved - validation data used for hyperparameter selection)")
-            continue
-
         ds_config = f"{dataset_name}/{term}"
-        predictor = MockPredictor(forecasts)
+        fc_quantiles = np.stack(fc_quantiles, axis=0).astype(np.float32, copy=False)
         model_hyperparams = {
             "model_id": model_id,
             "context_length": context_length,
@@ -372,11 +235,12 @@ def run_toto_experiment(
 
         save_window_predictions(
             dataset=dataset,
-            predictor=predictor,
+            fc_quantiles=fc_quantiles,
             ds_config=ds_config,
             output_base_dir=output_dir,
             seasonality=season_length,
             model_hyperparams=model_hyperparams,
+            quantile_levels=quantile_levels,
         )
 
     print(f"\n{'='*60}")
@@ -387,32 +251,76 @@ def run_toto_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Toto experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
-                        help="Dataset name(s). 'all_datasets' for all.")
-    parser.add_argument("--terms", type=str, nargs="+", default=None,
-                        choices=["short", "medium", "long"],
-                        help="Terms to evaluate. If not specified, auto-detect from config.")
-    parser.add_argument("--model-size", type=str, default=None,
-                        choices=["base"],
-                        help="Model size alias (maps to a model id)")
-    parser.add_argument("--model-id", type=str, default="Datadog/Toto-Open-Base-1.0",
-                        help="Toto model ID")
-    parser.add_argument("--output-dir", type=str, default=None,
-                        help="Output directory for results")
-    parser.add_argument("--num-samples", type=int, default=100,
-                        help="Number of samples for probabilistic forecasting")
-    parser.add_argument("--samples-per-batch", type=int, default=100,
-                        help="Samples per batch (controls memory during inference)")
-    parser.add_argument("--context-length", type=int, default=4096,
-                        help="Maximum context length")
-    parser.add_argument("--cuda-device", type=str, default="0",
-                        help="CUDA device ID")
-    parser.add_argument("--config", type=str, default=None,
-                        help="Path to datasets.yaml config file")
-    parser.add_argument("--val", action="store_true",
-                        help="Evaluate on validation data (no saving)")
-    parser.add_argument("--no-compile", action="store_true",
-                        help="Disable torch compile for Toto")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        nargs="+",
+        default=["SG_Weather/D"],
+        help="Dataset name(s). 'all_datasets' for all.",
+    )
+    parser.add_argument(
+        "--terms",
+        type=str,
+        nargs="+",
+        default=None,
+        choices=["short", "medium", "long"],
+        help="Terms to evaluate. If not specified, auto-detect from config.",
+    )
+    parser.add_argument(
+        "--model-size",
+        type=str,
+        default=None,
+        choices=["base"],
+        help="Model size alias (maps to a model id)",
+    )
+    parser.add_argument(
+        "--model-id",
+        type=str,
+        default="Datadog/Toto-Open-Base-1.0",
+        help="Toto model ID",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Output directory for results",
+    )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=256,
+        help="Number of samples for probabilistic forecasting",
+    )
+    parser.add_argument(
+        "--samples-per-batch",
+        type=int,
+        default=256,
+        help="Samples per batch (controls memory during inference)",
+    )
+    parser.add_argument(
+        "--context-length",
+        type=int,
+        default=4096,
+        help="Maximum context length",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to datasets.yaml config file",
+    )
+    parser.add_argument(
+        "--no-compile",
+        action="store_true",
+        help="Disable torch compile for Toto",
+    )
+    parser.add_argument(
+        "--quantiles",
+        type=float,
+        nargs="+",
+        default=DEFAULT_QUANTILE_LEVELS,
+        help="Quantile levels to predict",
+    )
 
     args = parser.parse_args()
 
@@ -448,10 +356,9 @@ def main():
                 num_samples=args.num_samples,
                 samples_per_batch=args.samples_per_batch,
                 context_length=args.context_length,
-                cuda_device=args.cuda_device,
                 config_path=config_path,
-                use_val=args.val,
                 compile_model=not args.no_compile,
+                quantile_levels=args.quantiles,
             )
         except Exception as exc:
             print(f"ERROR: Failed to run experiment for {dataset_name}: {exc}")

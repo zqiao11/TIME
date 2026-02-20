@@ -11,14 +11,13 @@ Usage:
     python experiments/tirex_model.py --dataset "Traffic/15T" --terms short medium long
     python experiments/tirex_model.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/tirex_model.py --dataset all_datasets  # Run all datasets from config
-    python experiments/tirex_model.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
 import os
 import sys
-from pathlib import Path
 import traceback
+from pathlib import Path
 
 # Ensure timebench is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -30,180 +29,18 @@ from gluonts.time_feature import get_seasonality
 
 from tirex import ForecastModel, load_model
 
-from timebench.evaluation.saver import save_window_quantile_predictions
+from timebench.evaluation.saver import save_window_predictions
 from timebench.evaluation.data import (
     Dataset,
     get_dataset_settings,
     load_dataset_config,
 )
+from timebench.evaluation.utils import get_available_terms
 
 load_dotenv()
 
+DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
-def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
-    series = series.astype(np.float32, copy=False)
-    if not np.isnan(series).any():
-        return series
-    idx = np.arange(series.shape[0])
-    mask = np.isfinite(series)
-    if mask.sum() == 0:
-        return np.nan_to_num(series, nan=0.0)
-    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
-    return series
-
-
-def _clean_nan_target(series: np.ndarray) -> np.ndarray:
-    if series.ndim == 1:
-        return _impute_nans_1d(series)
-    if series.ndim == 2:
-        cleaned = np.empty_like(series, dtype=np.float32)
-        for i in range(series.shape[0]):
-            cleaned[i] = _impute_nans_1d(series[i])
-        return cleaned
-    return np.nan_to_num(series, nan=0.0)
-
-
-class TirexQuantileForecast:
-    def __init__(self, quantiles, quantile_levels, mean=None):
-        q_data = quantiles
-        if isinstance(q_data, torch.Tensor):
-            q_data = q_data.detach().cpu().float().numpy()
-        if mean is not None and isinstance(mean, torch.Tensor):
-            mean = mean.detach().cpu().float().numpy()
-
-        q_data = np.asarray(q_data, dtype=np.float32)
-        levels = [float(q) for q in quantile_levels]
-        num_levels = len(levels)
-
-        if q_data.ndim == 1:
-            q_data = q_data[np.newaxis, :]
-        if q_data.ndim == 2:
-            if q_data.shape[0] != num_levels and q_data.shape[1] == num_levels:
-                q_data = q_data.T
-        elif q_data.ndim == 3:
-            if q_data.shape[0] != num_levels and q_data.shape[-1] == num_levels:
-                q_data = q_data.transpose(2, 0, 1)
-        else:
-            raise ValueError(f"Unexpected quantile shape: {q_data.shape}")
-
-        self._quantiles = q_data
-        self._quantile_levels = levels
-
-        if mean is None:
-            if 0.5 in self._quantile_levels:
-                idx = int(np.where(np.isclose(self._quantile_levels, 0.5, atol=1e-6))[0][0])
-                mean = self._quantiles[idx]
-            else:
-                mean = np.mean(self._quantiles, axis=0)
-        self._mean = mean
-
-    @property
-    def mean(self):
-        return self._mean
-
-    @property
-    def quantile_levels(self):
-        return self._quantile_levels
-
-    def quantile(self, q: float):
-        q_levels = np.asarray(self._quantile_levels, dtype=float)
-        matches = np.where(np.isclose(q_levels, q, atol=1e-6))[0]
-        if matches.size == 0:
-            raise ValueError(f"Quantile {q} not available. Supported: {self._quantile_levels}")
-        return self._quantiles[int(matches[0])]
-
-    def cpu(self):
-        return self
-
-
-class MockPredictor:
-    def __init__(self, forecasts):
-        self.forecasts = forecasts
-
-    def predict(self, dataset_input, **kwargs):
-        return self.forecasts
-
-
-def _prepare_context(series, target_length):
-    """
-    Ensure series is exactly target_length for batching.
-    - If longer, crop to the last `target_length` points.
-    - If shorter, left-pad with zeros to target_length.
-    """
-    if series.shape[0] >= target_length:
-        return series[-target_length:]
-    pad_len = target_length - series.shape[0]
-    pad = np.zeros((pad_len,), dtype=series.dtype)
-    return np.concatenate([pad, series], axis=0)
-
-
-def _normalize_mean(mean, batch_size, prediction_length):
-    mean = np.asarray(mean)
-    if mean.ndim == 1:
-        mean = mean[np.newaxis, :]
-    elif mean.ndim == 2:
-        if mean.shape[0] != batch_size and mean.shape[1] == batch_size:
-            mean = mean.T
-    elif mean.ndim == 3:
-        if mean.shape[-1] == 1:
-            mean = mean.squeeze(-1)
-        elif mean.shape[1] == 1:
-            mean = mean.squeeze(1)
-        if mean.ndim == 1:
-            mean = mean[np.newaxis, :]
-    if mean.shape[1] > prediction_length:
-        mean = mean[:, :prediction_length]
-    return mean
-
-
-def _normalize_quantiles(quantiles, batch_size, prediction_length):
-    if quantiles is None:
-        return None
-    q = np.asarray(quantiles)
-    if q.ndim == 2:
-        if q.shape[0] == prediction_length:
-            q = q[np.newaxis, :, :]
-        elif q.shape[1] == prediction_length:
-            q = q.T[np.newaxis, :, :]
-        else:
-            return None
-    elif q.ndim == 3:
-        if q.shape[0] == batch_size and q.shape[1] == prediction_length:
-            pass
-        elif q.shape[0] == batch_size and q.shape[2] == prediction_length:
-            q = q.transpose(0, 2, 1)
-        elif q.shape[1] == batch_size and q.shape[2] == prediction_length:
-            q = q.transpose(1, 2, 0)
-        elif q.shape[2] == batch_size and q.shape[1] == prediction_length:
-            q = q.transpose(2, 1, 0)
-        else:
-            return None
-    else:
-        return None
-
-    if q.shape[1] > prediction_length:
-        q = q[:, :prediction_length, :]
-    return q
-
-
-def _resolve_quantile_levels(num_quantiles, quantile_levels):
-    if quantile_levels is None or len(quantile_levels) != num_quantiles:
-        quantile_levels = np.linspace(0.1, 0.9, num_quantiles)
-    return [float(q) for q in quantile_levels]
-
-
-
-def get_available_terms(dataset_name: str, config: dict) -> list[str]:
-    """Get the terms that are actually defined in the config for a dataset."""
-    datasets_config = config.get("datasets", {})
-    if dataset_name not in datasets_config:
-        return []
-    dataset_config = datasets_config[dataset_name]
-    available_terms = []
-    for term in ["short", "medium", "long"]:
-        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
-            available_terms.append(term)
-    return available_terms
 
 def run_tirex_experiment(
     dataset_name: str = "TSBench_IMOS_v2/15T",
@@ -211,13 +48,9 @@ def run_tirex_experiment(
     model_id: str = "NX-AI/TiRex",
     output_dir: str | None = None,
     batch_size: int = 128,
-    context_length: int = 4000,
-    cuda_device: str = "0",
     config_path: Path | None = None,
-    use_val: bool = False,
     quantile_levels: list[float] | None = None,
 ):
-    os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("Loading configuration...")
@@ -229,7 +62,7 @@ def run_tirex_experiment(
         if not terms:
             raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
     if quantile_levels is None:
-        quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        quantile_levels = DEFAULT_QUANTILE_LEVELS
 
     if output_dir is None:
         output_dir = "./output/results/tirex"
@@ -240,22 +73,22 @@ def run_tirex_experiment(
     print(f"Dataset: {dataset_name}")
     print(f"Model: {model_id}")
     print(f"Terms: {terms}")
-    print(f"Evaluation on: {'Validation data (no saving)' if use_val else 'Test data'}")
     print(f"{'='*60}")
 
     print(f"  Loading TiRex model ({model_id})...")
-    model: ForecastModel = load_model(model_id)
+
+    model: ForecastModel = load_model(model_id, device="cuda")
+
     if hasattr(model, "to"):
         model = model.to(device)
 
     for term in terms:
         print(f"\n--- Term: {term} ---")
 
-        # --- FIX: Match Moirai's logic for retrieving settings ---
         settings = get_dataset_settings(dataset_name, term, config)
         prediction_length = settings.get("prediction_length")
-        test_length = settings.get("test_length") # Changed from test_split
-        val_length = settings.get("val_length")   # Changed from val_split
+        test_length = settings.get("test_length")
+        val_length = settings.get("val_length")
 
         print(
             "  Config: prediction_length={}, test_length={}, val_length={}".format(
@@ -263,30 +96,26 @@ def run_tirex_experiment(
             )
         )
 
-        # TiRex is a univariate model.
-        to_univariate = False if Dataset(name=dataset_name, term=term,to_univariate=False).target_dim == 1 else True
+        to_univariate = (
+            False
+            if Dataset(name=dataset_name, term=term, to_univariate=False).target_dim == 1
+            else True
+        )
         dataset = Dataset(
             name=dataset_name,
             term=term,
             to_univariate=to_univariate,
             prediction_length=prediction_length,
-            test_length=test_length, # Changed from test_split
-            val_length=val_length,   # Changed from val_split
+            test_length=test_length,
+            val_length=val_length,
         )
 
         eval_target_dim = 1
 
-        # --- FIX: Calculate actual data length based on settings (not splits) ---
-        if use_val:
-            data_length = val_length
-            num_windows = dataset.val_windows
-            split_name = "Val split"
-            eval_data = dataset.val_data
-        else:
-            data_length = test_length
-            num_windows = dataset.windows
-            split_name = "Test split"
-            eval_data = dataset.test_data
+        data_length = test_length
+        num_windows = dataset.windows
+        split_name = "Test split"
+        eval_data = dataset.test_data
 
         print("  Dataset info:")
         print(f"    - Frequency: {dataset.freq}")
@@ -305,60 +134,38 @@ def run_tirex_experiment(
 
         season_length = get_seasonality(dataset.freq)
 
-        print(
-            f"  Running predictions on {'validation' if use_val else 'test'} data..."
-        )
-        forecasts = []
+        fc_quantiles = []
 
-        # 1. Collect all series and Pre-process (Pad/Crop)
         flat_contexts = []
         for entry in eval_data.input:
-            target = _clean_nan_target(np.asarray(entry["target"], dtype=np.float32))
+            target = np.asarray(entry["target"], dtype=np.float32)
             if target.ndim == 1:
                 series = target
             else:
                 series = target.squeeze()
 
-            # Use strict context length for consistency
-            series = _prepare_context(series, context_length)
             flat_contexts.append(series)
 
-        # 2. Batch Inference
         total_items = len(flat_contexts)
 
         for start in range(0, total_items, batch_size):
             end = min(start + batch_size, total_items)
             batch = flat_contexts[start:end]
 
-            batch_tensor = torch.tensor(np.stack(batch), dtype=torch.float32, device=device)
-
             with torch.no_grad():
                 quantiles, mean = model.forecast(
-                    context=batch_tensor, prediction_length=prediction_length
+                    context=batch, prediction_length=prediction_length
                 )
 
-            batch_size_actual = batch_tensor.shape[0]
-            mean_np = _normalize_mean(mean, batch_size_actual, prediction_length) if mean is not None else None
-            quantiles_np = _normalize_quantiles(
-                quantiles, batch_size_actual, prediction_length
-            )
-            if quantiles_np is None:
-                raise ValueError("TiRex forecast did not return usable quantiles.")
-            quantile_levels = _resolve_quantile_levels(
-                quantiles_np.shape[-1], quantile_levels
-            )
-            batch_quantile_levels = quantile_levels
+            if isinstance(quantiles, torch.Tensor):
+                quantiles_np = quantiles.detach().cpu().float().numpy()
+            else:
+                quantiles_np = np.asarray(quantiles)
 
-            for i in range(batch_size_actual):
-                mean_series = mean_np[i] if mean_np is not None else None
-                q_series = quantiles_np[i]
-                forecasts.append(
-                    TirexQuantileForecast(
-                        q_series,
-                        quantile_levels=batch_quantile_levels,
-                        mean=mean_series,
-                    )
-                )
+            # (batch, prediction_length, num_quantiles) -> (batch, num_quantiles, prediction_length)
+            quantiles_np = quantiles_np.transpose(0, 2, 1)
+
+            fc_quantiles.append(quantiles_np)
 
             if start % (batch_size * 5) == 0:
                 sys.stdout.write(f"\r    Processed {end}/{total_items} items...")
@@ -366,39 +173,33 @@ def run_tirex_experiment(
 
         print(f"\r    Processed {total_items}/{total_items} items. Done.")
 
-        num_total_instances = len(forecasts)
+        fc_quantiles = np.concatenate(fc_quantiles, axis=0).astype(np.float32, copy=False)
+        num_total_instances = fc_quantiles.shape[0]
         num_series = num_total_instances // num_windows
-        num_variates = eval_target_dim
 
         print(
             f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}"
         )
 
-        if use_val:
-            print("    [Validation] Organizing data and computing metrics manually...")
+        ds_config = f"{dataset_name}/{term}"
+        model_hyperparams = {
+            "model_id": model_id,
+            "quantile_levels": quantile_levels,
+        }
 
-        else:
-            ds_config = f"{dataset_name}/{term}"
-            model_hyperparams = {
-                "model_id": model_id,
-                "context_length": context_length,
-                "quantile_levels": quantile_levels,
-            }
-
-            mock_predictor = MockPredictor(forecasts)
-            metadata = save_window_quantile_predictions(
-                dataset=dataset,
-                predictor=mock_predictor,
-                ds_config=ds_config,
-                output_base_dir=output_dir,
-                seasonality=season_length,
-                model_hyperparams=model_hyperparams,
-                quantile_levels=quantile_levels,
-            )
-            print(
-                f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows"
-            )
-            print(f"  Output: {metadata.get('output_dir', output_dir)}")
+        metadata = save_window_predictions(
+            dataset=dataset,
+            fc_quantiles=fc_quantiles,
+            ds_config=ds_config,
+            output_base_dir=output_dir,
+            seasonality=season_length,
+            model_hyperparams=model_hyperparams,
+            quantile_levels=quantile_levels,
+        )
+        print(
+            f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows"
+        )
+        print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
     print(f"\n{'='*60}")
     print("All experiments completed!")
@@ -413,7 +214,7 @@ def main():
         type=str,
         nargs="+",
         default=["IMOS/15T"],
-        help="Dataset name(s)"
+        help="Dataset name(s)",
     )
     parser.add_argument(
         "--terms",
@@ -446,22 +247,13 @@ def main():
         "--quantiles",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+        default=DEFAULT_QUANTILE_LEVELS,
         help="Quantile levels to predict",
     )
-    parser.add_argument(
-        "--context-length", type=int, default=2048, help="Maximum context length"
-    )
-    parser.add_argument("--cuda-device", type=str, default="0", help="CUDA device ID")
+
     parser.add_argument(
         "--config", type=str, default=None, help="Path to datasets.yaml config file"
     )
-    parser.add_argument(
-        "--val",
-        action="store_true",
-        help="Evaluate on validation data (for hyperparameter selection, no saving)",
-    )
-
     args = parser.parse_args()
     config_path = Path(args.config) if args.config else None
 
@@ -492,10 +284,7 @@ def main():
                 model_id=model_id,
                 output_dir=args.output_dir,
                 batch_size=args.batch_size,
-                context_length=args.context_length,
-                cuda_device=args.cuda_device,
                 config_path=config_path,
-                use_val=args.val,
                 quantile_levels=args.quantiles,
             )
         except Exception as e:
