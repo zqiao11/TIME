@@ -21,7 +21,7 @@ from timebench.evaluation.metrics import (
 
 def save_window_predictions(
     dataset,
-    fc_quantiles: list[np.ndarray],
+    fc_quantiles: np.ndarray,
     ds_config: str,
     output_base_dir: str,
     seasonality: int = 1,
@@ -38,11 +38,11 @@ def save_window_predictions(
             - target_dim: Number of variates
             - prediction_length: Forecast horizon
             - freq: Data frequency string
-        fc_quantiles: Flat list of quantile prediction arrays, one per
-            test instance (same order as dataset.test_data).
-            Each element shape:
-                - (num_quantiles, prediction_length) for univariate
-                - (num_quantiles, num_variates, prediction_length) for multivariate
+        fc_quantiles: Concatenated quantile prediction array.
+            Shape:
+                - (num_total_instances, num_quantiles, prediction_length) for univariate
+                - (num_total_instances, num_quantiles, num_variates, prediction_length) for multivariate
+            where num_total_instances = num_series * num_windows
         ds_config: Dataset configuration string, e.g., "m4_weekly/W/short"
         output_base_dir: Base directory for output files
         seasonality: Seasonal period length for MASE computation
@@ -80,7 +80,7 @@ def save_window_predictions(
     original_num_variates = dataset.target_dim  # Original variates before to_univariate
 
     # Count number of series during experiment (test_data contains num_series_exp * num_windows instances)
-    num_total_instances = len(fc_quantiles)
+    num_total_instances = fc_quantiles.shape[0]
     num_series_exp = num_total_instances // num_windows  # != num_series in original dataset if to_univariate is True
 
     print(f"    Total instances: {num_total_instances}, Series during experiment: {num_series_exp}, Windows: {num_windows}")
@@ -93,25 +93,26 @@ def save_window_predictions(
         ground_truths.append(label["target"])
         contexts.append(inp["target"])
 
-    # Determine if forecasts are univariate by checking the first element
+    # Determine if forecasts are univariate by checking the shape
     forecast_is_univariate = False
-    first_fc = fc_quantiles[0]
-    if first_fc.ndim == 2:
-        # Shape: (num_quantiles, prediction_length) -> univariate
-        assert first_fc.shape[0] == num_quantiles, \
-            f"Mismatch in quantiles (dim 0). Expected {num_quantiles}, but got {first_fc.shape[0]}. Full shape: {first_fc.shape}"
-        assert first_fc.shape[1] == prediction_length, \
-            f"Mismatch in prediction_length (dim 1). Expected {prediction_length}, but got {first_fc.shape[1]}. Full shape: {first_fc.shape}"
+    if fc_quantiles.ndim == 3:
+        # Shape: (num_total_instances, num_quantiles, prediction_length) -> univariate
+        assert fc_quantiles.shape[1] == num_quantiles, \
+            f"Mismatch in quantiles (dim 1). Expected {num_quantiles}, but got {fc_quantiles.shape[1]}. Full shape: {fc_quantiles.shape}"
+        assert fc_quantiles.shape[2] == prediction_length, \
+            f"Mismatch in prediction_length (dim 2). Expected {prediction_length}, but got {fc_quantiles.shape[2]}. Full shape: {fc_quantiles.shape}"
         forecast_is_univariate = True
 
-    elif first_fc.ndim == 3:
-        # Shape: (num_quantiles, num_variates, prediction_length)
-        assert first_fc.shape[0] == num_quantiles, \
-            f"Mismatch in quantiles (dim 0). Expected {num_quantiles}, but got {first_fc.shape[0]}. Full shape: {first_fc.shape}"
-        assert first_fc.shape[1] == original_num_variates, \
-            f"Mismatch in num_variates (dim 1). Expected {original_num_variates}, but got {first_fc.shape[1]}. Full shape: {first_fc.shape}"
-        assert first_fc.shape[2] == prediction_length, \
-            f"Mismatch in prediction_length (dim 2). Expected {prediction_length}, but got {first_fc.shape[2]}. Full shape: {first_fc.shape}"
+    elif fc_quantiles.ndim == 4:
+        # Shape: (num_total_instances, num_quantiles, num_variates, prediction_length)
+        assert fc_quantiles.shape[1] == num_quantiles, \
+            f"Mismatch in quantiles (dim 1). Expected {num_quantiles}, but got {fc_quantiles.shape[1]}. Full shape: {fc_quantiles.shape}"
+        assert fc_quantiles.shape[2] == original_num_variates, \
+            f"Mismatch in num_variates (dim 2). Expected {original_num_variates}, but got {fc_quantiles.shape[2]}. Full shape: {fc_quantiles.shape}"
+        assert fc_quantiles.shape[3] == prediction_length, \
+            f"Mismatch in prediction_length (dim 3). Expected {prediction_length}, but got {fc_quantiles.shape[3]}. Full shape: {fc_quantiles.shape}"
+    else:
+        raise ValueError(f"Expected fc_quantiles to have 3 or 4 dimensions, but got {fc_quantiles.ndim}. Shape: {fc_quantiles.shape}")
 
 
     # Detect to_univariate case: forecasts are univariate but original dataset has multiple variates
@@ -138,7 +139,10 @@ def save_window_predictions(
     context_array = np.full((num_series, num_windows, num_variates, context_len), np.nan)
 
     print("    Organizing data into arrays...")
-    for idx, (fc_q, gt, ctx) in enumerate(zip(fc_quantiles, ground_truths, contexts)):
+    for idx, (gt, ctx) in enumerate(zip(ground_truths, contexts)):
+        # Extract fc_q from the concatenated array
+        fc_q = fc_quantiles[idx]
+
         # Normalize fc_q to shape: (num_quantiles, num_variates, prediction_length)
         if fc_q.ndim == 2:
             # (num_quantiles, prediction_length) -> (num_quantiles, 1, prediction_length)

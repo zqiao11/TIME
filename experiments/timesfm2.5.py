@@ -4,7 +4,7 @@ TimesFM model experiments for time series forecasting.
 Usage:
     python experiments/timesfm2.5.py
     python experiments/timesfm2.5.py --model-size base
-    python experiments/timesfm2.5.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
+    python experiments/timesfm2.5.py --dataset "SG_Weather/D" --terms short medium long
     python experiments/timesfm2.5.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/timesfm2.5.py --dataset "SG_Weather/D" --batch-size 32
     python experiments/timesfm2.5.py --dataset all_datasets  # Run all datasets from config
@@ -181,13 +181,13 @@ def run_timesfm_experiment(
                 inputs=batch_inputs,
             )
 
-            # quantile_forecast: (batch, horizon, 10) -> mean, 10th...90th
             processed_quantile_forecast = quantile_forecast[:, :, 1:].transpose(0, 2, 1)  # (batch, 9, horizon)
-            fc_quantiles.extend(list(processed_quantile_forecast))
+            fc_quantiles.append(processed_quantile_forecast)
 
             if (i + batch_size) % (batch_size * 10) == 0:
                 print(f"    Processed {i + batch_size}/{num_total_instances}...")
 
+        fc_quantiles = np.concatenate(fc_quantiles, axis=0)  # (total_instances, 9, horizon)
         ds_config = f"{dataset_name}/{term}"
 
         model_hyperparams = {
@@ -218,7 +218,7 @@ def run_timesfm_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run TimesFM experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["ECDC_COVID/W"],
                         help="Dataset name(s). 'all_datasets' for all.")
     parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],

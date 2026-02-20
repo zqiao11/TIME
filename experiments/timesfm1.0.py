@@ -200,20 +200,20 @@ def run_timesfm_experiment(
 
         for i in range(0, num_total_instances, batch_size):
             batch_inputs = all_inputs[i : i + batch_size]
-            batch_freq = [freq_code] * len(batch_inputs)
 
+            # TimesFM forecast
             point_forecast, quantile_forecast = tfm.forecast(
-                batch_inputs,
-                freq=batch_freq,
-                forecast_context_len=context_length,
-                normalize=normalize_inputs,
+                horizon=prediction_length,
+                inputs=batch_inputs,
             )
-            processed_quantile_forecast = quantile_forecast[:, :, 1:].transpose(0, 2, 1)
-            fc_quantiles.extend(list(processed_quantile_forecast))
+
+            processed_quantile_forecast = quantile_forecast[:, :, 1:].transpose(0, 2, 1)  # (batch, 9, horizon)
+            fc_quantiles.append(processed_quantile_forecast)
 
             if (i + batch_size) % (batch_size * 10) == 0:
                 print(f"    Processed {i + batch_size}/{num_total_instances}...")
 
+        fc_quantiles = np.concatenate(fc_quantiles, axis=0)  # (total_instances, 9, horizon)
         ds_config = f"{dataset_name}/{term}"
 
         model_hyperparams = {
@@ -251,7 +251,7 @@ def run_timesfm_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run TimesFM-1.0 inference")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["ECDC_COVID/W"],
                         help="Dataset name(s). 'all_datasets' for all.")
     parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
