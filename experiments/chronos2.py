@@ -38,30 +38,6 @@ load_dotenv()
 
 logging.getLogger("chronos").setLevel(logging.ERROR)
 
-# ------------------------------
-# NaN cleaning helpers
-# ------------------------------
-def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
-    series = series.astype(np.float32, copy=False)
-    if not np.isnan(series).any():
-        return series
-    idx = np.arange(series.shape[0])
-    mask = np.isfinite(series)
-    if mask.sum() == 0:
-        return np.nan_to_num(series, nan=0.0)
-    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
-    return series
-
-
-def _clean_nan_target(series: np.ndarray) -> np.ndarray:
-    if series.ndim == 1:
-        return _impute_nans_1d(series)
-    if series.ndim == 2:
-        cleaned = np.empty_like(series, dtype=np.float32)
-        for i in range(series.shape[0]):
-            cleaned[i] = _impute_nans_1d(series[i])
-        return cleaned
-    return np.nan_to_num(series, nan=0.0)
 
 # --- Helper Classes for Chronos-2 adaptation ---
 
@@ -179,7 +155,6 @@ def run_chronos2_experiment(
         pipeline = Chronos2Pipeline.from_pretrained(
             hf_model_path,
             device_map=device_map,
-            torch_dtype=torch.bfloat16,
         )
 
         # Dataset Initialization
@@ -232,8 +207,6 @@ def run_chronos2_experiment(
             seq_len = target.shape[-1]
             if context_length is not None and seq_len > context_length:
                 target = target[..., -context_length:]
-
-            target = _clean_nan_target(target)
 
             if target.ndim == 1:
                 target = target[np.newaxis, :]
@@ -354,7 +327,7 @@ def main():
         default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
         help="Quantile levels to predict",
     )
-    parser.add_argument("--context-length", type=int, default=4000,
+    parser.add_argument("--context-length", type=int, default=8192,
                         help="Maximum context length")
     parser.add_argument("--cuda-device", type=str, default="0",
                         help="CUDA device ID")
