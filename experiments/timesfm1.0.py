@@ -200,11 +200,14 @@ def run_timesfm_experiment(
 
         for i in range(0, num_total_instances, batch_size):
             batch_inputs = all_inputs[i : i + batch_size]
+            batch_freq = [freq_code] * len(batch_inputs)
 
             # TimesFM forecast
             point_forecast, quantile_forecast = tfm.forecast(
-                horizon=prediction_length,
-                inputs=batch_inputs,
+                batch_inputs,
+                freq=batch_freq,
+                forecast_context_len=context_length,
+                normalize=normalize_inputs,
             )
 
             processed_quantile_forecast = quantile_forecast[:, :, 1:].transpose(0, 2, 1)  # (batch, 9, horizon)
