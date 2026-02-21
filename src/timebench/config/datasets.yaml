@@ -1,10 +1,10 @@
 # =============================================================================
-# 数据集特定配置
+# Dataset Configuration
 # =============================================================================
-# 格式:
+# Format:
 # dataset_name/freq:
-#   test_length: <int>      # 测试集长度 (所有 term 共享)
-#   val_length: <int>       # 验证集长度 (所有 term 共享，可选)
+#   test_length: <int>      # Test set length (shared across all terms)
+#   val_length: <int>       # Validation set length (shared across all terms, optional)
 #   short:
 #     prediction_length: <int>
 #   medium:
@@ -12,10 +12,10 @@
 #   long:
 #     prediction_length: <int>
 #
-# windows 和 val_windows 自动计算，无需手动设置
+# windows and val_windows are automatically calculated, no manual setting required
 # windows = ceil(test_length / prediction_length)
 # val_windows = ceil(val_length / prediction_length)
-# 这样确保不同 term 在相同的 test/val 区间上评估，保证公平比较
+# This ensures different terms are evaluated on the same test/val intervals, ensuring fair comparison
 # =============================================================================
 
 datasets:

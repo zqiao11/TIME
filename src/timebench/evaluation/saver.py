@@ -42,7 +42,7 @@ def save_window_predictions(
             Shape:
                 - (num_total_instances, num_quantiles, prediction_length) for univariate
                 - (num_total_instances, num_quantiles, num_variates, prediction_length) for multivariate
-            where num_total_instances = num_series * num_windows
+            where num_total_instances = num_series_exp * num_windows
         ds_config: Dataset configuration string, e.g., "m4_weekly/W/short"
         output_base_dir: Base directory for output files
         seasonality: Seasonal period length for MASE computation

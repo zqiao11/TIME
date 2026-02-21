@@ -1,6 +1,6 @@
 # Copyright (c) 2023, Salesforce, Inc.
 # SPDX-License-Identifier: Apache-2
-# Modified by TimeBench for flexible prediction lengths and YAML config support.
+# Modified by TIME for flexible prediction lengths and YAML config support.
 
 import math
 import os
@@ -23,14 +23,14 @@ from gluonts.transform import Transformation
 from pandas.tseries.frequencies import to_offset
 from toolz import compose
 
-# --- Constants ---
+# --- Constants from Gift-Eval---
 # Default prediction length by frequency (used when no config provided)
 M4_PRED_LENGTH_MAP = {
     "A": 6, "Q": 8, "M": 18, "W": 13, "D": 14, "H": 48,
 }
 
 PRED_LENGTH_MAP = {
-    "M": 12, "W": 8, "D": 30, "H": 48, "T": 48, "S": 60,
+    "A": 6, "Q": 8, "M": 12, "W": 8, "B": 21, "D": 30, "H": 48, "T": 48, "S": 60,
 }
 
 # Default config path - try multiple locations

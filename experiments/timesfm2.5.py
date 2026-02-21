@@ -69,7 +69,7 @@ def run_timesfm_experiment(
         quantile_levels = DEFAULT_QUANTILE_LEVELS
 
     if output_dir is None:
-        output_dir = "./output/results/TimesFM-2.5-New"
+        output_dir = "./output/results/TimesFM-2.5"
 
     os.makedirs(output_dir, exist_ok=True)
 

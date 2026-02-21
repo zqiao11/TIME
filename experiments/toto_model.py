@@ -8,7 +8,6 @@ Usage:
     python experiments/toto_model.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
     python experiments/toto_model.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/toto_model.py --dataset all_datasets  # Run all datasets from config
-    python experiments/toto_model.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
@@ -103,7 +102,7 @@ def _build_masked_timeseries(
 
 
 def run_toto_experiment(
-    dataset_name: str = "TSBench_IMOS_v2/15T",
+    dataset_name: str,
     terms: list[str] | None = None,
     model_id: str = "Datadog/Toto-Open-Base-1.0",
     output_dir: str | None = None,
@@ -125,7 +124,7 @@ def run_toto_experiment(
             raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
-        output_dir = "./output/results/toto"
+        output_dir = "./output/results/toto_New"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -255,7 +254,7 @@ def main():
         "--dataset",
         type=str,
         nargs="+",
-        default=["SG_Weather/D"],
+        default=["Global_Influenza/W"],
         help="Dataset name(s). 'all_datasets' for all.",
     )
     parser.add_argument(
@@ -294,7 +293,7 @@ def main():
     parser.add_argument(
         "--samples-per-batch",
         type=int,
-        default=256,
+        default=32,
         help="Samples per batch (controls memory during inference)",
     )
     parser.add_argument(

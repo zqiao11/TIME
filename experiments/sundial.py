@@ -105,7 +105,7 @@ def _normalize_samples_array(samples: np.ndarray, prediction_length: int) -> np.
 
 
 def run_sundial_experiment(
-    dataset_name: str = "TSBench_IMOS_v2/15T",
+    dataset_name: str,
     terms: list[str] | None = None,
     model_id: str = "thuml/sundial-base-128m",
     output_dir: str | None = None,
@@ -129,8 +129,7 @@ def run_sundial_experiment(
             raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
-        model_slug = model_id.split("/")[-1]
-        output_dir = f"./output/results/sundial_{model_slug}"
+        output_dir = f"./output/results/sundial_base"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -243,14 +242,6 @@ def run_sundial_experiment(
         fc_quantiles = np.quantile(samples, quantile_levels_array, axis=1)
         fc_quantiles = np.moveaxis(fc_quantiles, 0, 1).astype(np.float32, copy=False)
 
-        num_total_instances = fc_quantiles.shape[0]
-        num_series = num_total_instances // num_windows
-
-        print(
-            f"    Total instances: {num_total_instances}, "
-            f"Series: {num_series}, Windows: {num_windows}"
-        )
-
         ds_config = f"{dataset_name}/{term}"
 
         model_hyperparams = {
@@ -324,7 +315,7 @@ def main():
     parser.add_argument(
         "--num-samples",
         type=int,
-        default=20,
+        default=100,  # Their demo in Gift-Eval set it as 20, but we use 100 for more stable results
         help="Number of samples for probabilistic forecasting",
     )
 

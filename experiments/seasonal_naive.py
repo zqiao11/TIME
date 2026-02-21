@@ -10,7 +10,6 @@ Usage:
     python experiments/seasonal_naive.py --dataset "SG_Weather/D" --terms short medium long
     python experiments/seasonal_naive.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/seasonal_naive.py --dataset all_datasets  # Run all datasets from config
-    python experiments/seasonal_naive.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
@@ -31,84 +30,20 @@ from timebench.evaluation.data import (
     get_dataset_settings,
     load_dataset_config,
 )
+from timebench.evaluation.utils import get_available_terms
 from timebench.models import SeasonalNaivePredictor
 
 # Load environment variables
 load_dotenv()
 
 
-# NOTE: We do not use custom seasonality:
-# (1) to align with GE GluontTS
-# (2) freq needs to be the same across models to ensure their MASE using the same seasonal_error for norm.
-# PS: If want to use custom seasonality, pass gluonts_season to save_window_predictions; not season_length
-
-# # Custom seasonality mapping for frequencies where get_seasonality returns 1
-# # These are more meaningful seasonal periods for forecasting
-# CUSTOM_SEASONALITY = {
-#     "D": 7,      # Daily → weekly seasonality (7 days)
-#     "W": 52,     # Weekly → yearly seasonality (52 weeks)
-#     "A": 1,      # Annual → no meaningful sub-annual seasonality
-#     "Y": 1,      # Yearly → no meaningful sub-annual seasonality
-# }
-
-
-# def get_effective_seasonality(freq: str) -> int:
-#     """
-#     Get effective seasonality for a given frequency.
-
-#     Uses custom mapping for frequencies where gluonts.get_seasonality returns 1,
-#     otherwise falls back to get_seasonality.
-
-#     Args:
-#         freq: Frequency string (e.g., 'D', 'H', '15T')
-
-#     Returns:
-#         Seasonal period length
-#     """
-#     # Normalize frequency string (handle cases like '1D', '1H')
-#     freq_upper = freq.upper().lstrip('0123456789')
-
-#     # Check custom mapping first
-#     if freq_upper in CUSTOM_SEASONALITY:
-#         return CUSTOM_SEASONALITY[freq_upper]
-
-#     # Fall back to gluonts seasonality
-#     season_length = get_seasonality(freq)
-
-#     # # If get_seasonality returns 1, try to infer a reasonable default
-#     # if season_length == 1:
-#     #     # For sub-daily frequencies not in our mapping, use daily seasonality
-#     #     if 'T' in freq_upper or 'MIN' in freq_upper:
-#     #         # Minutes per day / minutes per period
-#     #         return 24 * 60 // max(1, int(''.join(filter(str.isdigit, freq)) or 1))
-#     #     elif 'S' in freq_upper:
-#     #         # Seconds: use hourly seasonality
-#     #         return 3600
-
-#     return season_length
-
-
-
-def get_available_terms(dataset_name: str, config: dict) -> list[str]:
-    """Get the terms that are actually defined in the config for a dataset."""
-    datasets_config = config.get("datasets", {})
-    if dataset_name not in datasets_config:
-        return []
-    dataset_config = datasets_config[dataset_name]
-    available_terms = []
-    for term in ["short", "medium", "long"]:
-        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
-            available_terms.append(term)
-    return available_terms
-
 
 def run_seasonal_naive_experiment(
-    dataset_name: str = "SG_Weather/D",
+    dataset_name: str,
     terms: list[str] = None,
     output_dir: str | None = None,
     num_samples: int = 100,
     config_path: Path | None = None,
-    use_val: bool = False,
 ):
     """
     Run Seasonal Naive baseline experiments on a dataset with specified terms.
@@ -140,7 +75,6 @@ def run_seasonal_naive_experiment(
     print(f"Model: Seasonal Naive")
     print(f"Dataset: {dataset_name}")
     print(f"Terms: {terms}")
-    print(f"Evaluation on: {'Validation data (no saving)' if use_val else 'Test data'}")
     print(f"{'='*60}")
 
     for term in terms:
@@ -167,16 +101,6 @@ def run_seasonal_naive_experiment(
             val_length=val_length,
         )
 
-
-        # # Get seasonality for the dataset frequency
-        # # Use custom mapping for frequencies where get_seasonality returns 1
-        # season_length = get_effective_seasonality(dataset.freq)
-        # gluonts_season = get_seasonality(dataset.freq)
-        # if season_length != gluonts_season:
-        #     print(f"  Seasonality: {season_length} (custom, gluonts default was {gluonts_season}, freq={dataset.freq})")
-        # else:
-        #     print(f"  Detected seasonality: {season_length} (freq={dataset.freq})")
-
         season_length = get_seasonality(dataset.freq)
         # Initialize Seasonal Naive predictor
         predictor = SeasonalNaivePredictor(
@@ -186,17 +110,10 @@ def run_seasonal_naive_experiment(
             num_samples=num_samples,
         )
 
-        # Calculate actual test/val length
-        if use_val:
-            data_length = val_length
-            num_windows = dataset.val_windows
-            split_name = "Val split"
-            eval_data = dataset.val_data
-        else:
-            data_length = test_length
-            num_windows = dataset.windows
-            split_name = "Test split"
-            eval_data = dataset.test_data
+        data_length = test_length
+        num_windows = dataset.windows
+        split_name = "Test split"
+        eval_data = dataset.test_data
 
         print("  Dataset info:")
         print(f"    - Frequency: {dataset.freq}")
@@ -209,89 +126,40 @@ def run_seasonal_naive_experiment(
         print(f"    - Season length: {season_length}")
 
         # Generate predictions
-        data_type = "validation" if use_val else "test"
-        print(f"  Running predictions on {data_type} data...")
         forecasts = list(predictor.predict(eval_data.input))
 
-        # Count number of series
-        num_total_instances = len(forecasts)
-        num_series = num_total_instances // num_windows
-        num_variates = dataset.target_dim
-        pred_len = dataset.prediction_length
+        fc_samples = []
+        for fc in forecasts:
+            fc_samples.append(fc.samples[np.newaxis, ...])
+        fc_samples = np.concatenate(fc_samples, axis=0)  # (num_total_instances, num_samples, 1, prediction_length)
 
-        print(f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}")
+        # Convert samples to quantiles
+        quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        quantile_levels_array = np.array(quantile_levels, dtype=float)
 
-        # Collect ground truth labels and contexts
-        print("    Collecting ground truth and context...")
-        ground_truths = []
-        contexts = []
-        for inp, label in eval_data:
-            ground_truths.append(label["target"])
-            contexts.append(inp["target"])
+        fc_quantiles = np.quantile(fc_samples, quantile_levels_array, axis=1)
+        # np.quantile returns (num_quantiles, num_total_instances, 1, prediction_length), need to transpose
+        fc_quantiles = fc_quantiles.transpose(1, 0, 2, 3)  # (num_total_instances, num_quantiles, 1, prediction_length)
+        fc_quantiles = fc_quantiles.squeeze(axis=2)
 
-        # Initialize arrays
-        fc_num_samples = forecasts[0].samples.shape[0] if len(forecasts) > 0 else num_samples
+        # Compute metrics
+        ds_config = f"{dataset_name}/{term}"
 
-        predictions_samples = np.zeros((num_series, num_windows, fc_num_samples, num_variates, pred_len))
-        ground_truth = np.zeros((num_series, num_windows, num_variates, pred_len))
+        # Prepare model hyperparameters for metadata
+        model_hyperparams = {
+            "season_length": season_length,
+        }
 
-        # Find max context length to pad contexts
-        max_context_len = max(ctx.shape[-1] for ctx in contexts)
-        context_array = np.full((num_series, num_windows, num_variates, max_context_len), np.nan)
-
-        print("    Organizing data into arrays...")
-        for idx, (fc, gt, ctx) in enumerate(zip(forecasts, ground_truths, contexts)):
-            series_idx = idx // num_windows
-            window_idx = idx % num_windows
-
-            # Get forecast samples
-            fc_samples = fc.samples
-
-            # Handle shape: fc_samples is (num_samples, num_variates, pred_len)
-            # No transpose needed as our predictor outputs in correct shape
-
-            # Handle ground truth shape
-            if gt.ndim == 1:
-                gt = gt[np.newaxis, :]
-            elif gt.shape[0] == pred_len and gt.shape[1] == num_variates:
-                gt = gt.T
-
-            # Handle context shape
-            if ctx.ndim == 1:
-                ctx = ctx[np.newaxis, :]
-            elif ctx.shape[0] != num_variates:
-                ctx = ctx.T
-
-            predictions_samples[series_idx, window_idx] = fc_samples
-            ground_truth[series_idx, window_idx] = gt
-
-            # Store context (padded with NaN for shorter contexts)
-            ctx_len = ctx.shape[-1]
-            context_array[series_idx, window_idx, :, :ctx_len] = ctx
-
-        # Compute metrics for validation or save for test
-        if use_val:
-            # For validation: just compute and print metrics
-            print("    Computing metrics...")
-        else:
-            # For test: save predictions and metrics
-            ds_config = f"{dataset_name}/{term}"
-
-            # Prepare model hyperparameters for metadata
-            model_hyperparams = {
-                "season_length": season_length,
-            }
-
-            metadata = save_window_predictions(
-                dataset=dataset,
-                predictor=predictor,
-                ds_config=ds_config,
-                output_base_dir=output_dir,
-                seasonality=season_length,
-                model_hyperparams=model_hyperparams,
-            )
-            print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
-            print(f"  Output: {metadata.get('output_dir', output_dir)}")
+        metadata = save_window_predictions(
+            dataset=dataset,
+            fc_quantiles=fc_quantiles,
+            ds_config=ds_config,
+            output_base_dir=output_dir,
+            seasonality=season_length,
+            model_hyperparams=model_hyperparams,
+        )
+        print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
+        print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
     print(f"\n{'='*60}")
     print("All experiments completed!")
@@ -301,7 +169,7 @@ def run_seasonal_naive_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Seasonal Naive baseline experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["SG_Weather/D"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["Port_Activity/D"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets' to run all datasets from config")
     parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
@@ -312,9 +180,6 @@ def main():
                         help="Number of samples for probabilistic forecasting (all identical for Seasonal Naive)")
     parser.add_argument("--config", type=str, default=None,
                         help="Path to datasets.yaml config file")
-    parser.add_argument("--val", action="store_true",
-                        help="Evaluate on validation data (for hyperparameter selection, no saving)")
-
     args = parser.parse_args()
 
     # Handle dataset list or 'all_datasets'
@@ -344,7 +209,6 @@ def main():
                 output_dir=args.output_dir,
                 num_samples=args.num_samples,
                 config_path=config_path,
-                use_val=args.val,
             )
         except Exception as e:
             print(f"ERROR: Failed to run experiment for {dataset_name}: {e}")

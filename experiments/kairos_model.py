@@ -59,7 +59,7 @@ def _prepare_context(series, target_length):
 
 
 def run_kairos_experiment(
-    dataset_name: str = "TSBench_IMOS_v2/15T",
+    dataset_name: str,
     terms: list[str] | None = None,
     model_id: str = "mldi-lab/Kairos_50m",
     output_dir: str | None = None,
@@ -79,8 +79,7 @@ def run_kairos_experiment(
             raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
-        model_slug = model_id.split("/")[-1]
-        output_dir = f"./output/results/kairos_{model_slug}"
+        output_dir = "./output/results/kairos_New"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -182,11 +181,6 @@ def run_kairos_experiment(
         flat_preds = np.concatenate(raw_predictions, axis=0)
 
         fc_quantiles = flat_preds.astype(np.float32, copy=False)
-        num_total_instances = fc_quantiles.shape[0]
-        num_series = num_total_instances // num_windows
-        print(
-            f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}"
-        )
         ds_config = f"{dataset_name}/{term}"
         model_hyperparams = {
             "model_id": model_id,

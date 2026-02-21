@@ -60,7 +60,7 @@ def run_chronos_bolt_experiment(
         quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
     if output_dir is None:
-        output_dir = f"./output/results/chronos_bolt_{model_size}_New"
+        output_dir = f"./output/results/chronos_bolt_{model_size}"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -77,7 +77,6 @@ def run_chronos_bolt_experiment(
     pipeline = BaseChronosPipeline.from_pretrained(
         model_name,
         device_map=device_map,
-        torch_dtype=torch.bfloat16,
     )
 
     for term in terms:
@@ -226,7 +225,7 @@ def main():
         default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
         help="Quantile levels to predict",
     )
-    parser.add_argument("--context-length", type=int, default=4000,
+    parser.add_argument("--context-length", type=int, default=2048,
                         help="Maximum context length")
     parser.add_argument("--config", type=str, default=None,
                         help="Path to datasets.yaml config file")

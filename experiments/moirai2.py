@@ -73,7 +73,7 @@ def run_moirai2_experiment(
     print(f"Model: {hf_model_path}, Total parameters: {total_params:,}")
 
     if output_dir is None:
-        output_dir = f"./output/results/moirai2_{model_size_used}_New"
+        output_dir = "./output/results/moirai2"
 
     os.makedirs(output_dir, exist_ok=True)
 

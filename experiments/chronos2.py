@@ -69,7 +69,7 @@ def run_chronos2_experiment(
         quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
     if output_dir is None:
-        output_dir = f"./output/results/chronos2_{model_size}_New"
+        output_dir = "./output/results/chronos2_base"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -102,7 +102,6 @@ def run_chronos2_experiment(
         pipeline = Chronos2Pipeline.from_pretrained(
             hf_model_path,
             device_map=device_map,
-            torch_dtype=torch.bfloat16,
         )
 
         # Dataset Initialization

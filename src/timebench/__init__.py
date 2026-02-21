@@ -2,7 +2,6 @@
 TIME Benchmark: A comprehensive Time Series Benchmarking framework.
 
 Modules:
-    - curation: Data crawling and cleaning
     - feature: Feature extraction and computation
     - preprocessing: Data preprocessing pipeline
     - evaluation: Model evaluation with per-window metrics

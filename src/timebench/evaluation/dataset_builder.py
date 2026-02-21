@@ -4,12 +4,12 @@ Dataset builder utilities for converting time series data to Arrow format.
 Reference: https://github.com/SalesforceAIResearch/uni2ts/blob/main/example/prepare_data.ipynb
 
 Arrow Dataset Schema:
-- item_id: str - 时间序列唯一标识符
-- start: timestamp[s] - 起始时间戳
-- freq: str - 时间频率 (如 "5T", "15T", "D")
-- target: list[list[float]] - 形状 [num_dims, seq_len]
-- variate_names: list[str] - variate 名称列表 (仅多变量模式，可选)
-- past_feat_dynamic_real: list[list[float]] - 形状 [num_features, seq_len] (可选)
+- item_id: str - Unique identifier for the time series
+- start: timestamp[s] - Start timestamp
+- freq: str - Time frequency (e.g., "5T", "15T", "D")
+- target: list[list[float]] - Shape [num_dims, seq_len]
+- variate_names: list[str] - List of variate names (multivariate mode only)
+- past_feat_dynamic_real: list[list[float]] - Shape [num_features, seq_len] (optional)
 """
 
 import argparse
@@ -87,7 +87,7 @@ def dataframes_to_generator(
                 feature=Sequence(Value("float32")),
                 length=num_dims
             ),
-            variate_names=Sequence(Value("string"), length=num_dims),  # 保存 variate 名称
+            variate_names=Sequence(Value("string"), length=num_dims),
         )
         if include_past_feat and num_past_feat > 0:
             feature_dict["past_feat_dynamic_real"] = Sequence(

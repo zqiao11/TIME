@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 import pandas as pd
-import yaml
 from tqdm import tqdm
 
 from timebench.feature.features import (
@@ -32,9 +31,15 @@ from timebench.feature.features import (
     tsfeatures_with_uid_freq_map,
 )
 
+from timebench.evaluation.utils import (
+    load_datasets_config,
+    parse_dataset_key,
+    get_test_length,
+    count_variates_in_dir,
+    find_dataset_config,
+)
+
 # Default config path relative to this module
-# features_runner.py is at src/timebench/feature/
-# datasets.yaml is at src/timebench/config/
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "datasets.yaml"
 
 
@@ -80,46 +85,6 @@ FEATURE_COLUMNS_ORDER = [
     "p_strength2",
     "p_strength3",
 ]
-
-
-def parse_dataset_key(dataset_key: str) -> tuple[str, str]:
-    """
-    解析 datasets.yaml 中的 key 格式 '{dataset}/{freq}'
-
-    Args:
-        dataset_key: 如 'exchange_rate/D', 'ETTh1/H', 'bitbrains_rnd/5T'
-
-    Returns:
-        (dataset_name, freq): 如 ('exchange_rate', 'D')
-    """
-    parts = dataset_key.split('/')
-    if len(parts) != 2:
-        raise ValueError(f"Invalid dataset key format: {dataset_key}. Expected 'dataset/freq'")
-    return parts[0], parts[1]
-
-
-def find_dataset_config(datasets_config: dict, dataset_key: str) -> tuple[str, str, dict]:
-    """
-    在 datasets.yaml 中查找指定数据集的配置
-
-    Args:
-        datasets_config: datasets.yaml 中的 'datasets' 字典
-        dataset_key: 数据集 key，格式为 '{dataset_name}/{freq}'（如 'IMOS/15T'）
-
-    Returns:
-        (dataset_key, freq, config): 完整的 key、频率、配置字典
-    """
-    if dataset_key in datasets_config:
-        name, freq = parse_dataset_key(dataset_key)
-        return dataset_key, freq, datasets_config[dataset_key]
-
-    # 兼容旧的只传 dataset_name 的情况
-    for key, config in datasets_config.items():
-        name, freq = parse_dataset_key(key)
-        if name == dataset_key:
-            return key, freq, config
-
-    raise ValueError(f"Dataset '{dataset_key}' not found in config")
 
 
 def convert_multi_csv_to_panel(
@@ -216,8 +181,8 @@ def compute_dataset_features(
         output_dir: Base directory for output files.
         test_length: Number of timesteps for test portion (required if split_mode="test").
         split_mode: Which portion to compute features on:
-            - "full": 完整序列
-            - "test": 只在最后 test_length 个时间步上计算（默认）
+            - "full": full series
+            - "test": test split only
 
     Returns:
         None. Saves features to {output_dir}/features/{dataset}/{freq}/{split_mode}.csv
@@ -315,50 +280,6 @@ def compute_dataset_features(
     print(f"[Done] {dataset_name}/{freq} ({split_mode}): Saved {len(features_df)} features to {output_csv_path} (elapsed {time.time() - start:.2f}s)")
 
 
-def count_variates_in_dir(csv_dir: str) -> tuple[int, int]:
-    """
-    Count total variates across all CSV files in directory.
-
-    Returns:
-        (n_series, n_total_variates): Number of series and total variate count
-    """
-    csv_files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
-    if not csv_files:
-        return 0, 0
-
-    n_series = len(csv_files)
-    total_variates = 0
-
-    for csv_path in csv_files:
-        df = pd.read_csv(csv_path, nrows=5)
-        # First column is timestamp, rest are variates
-        total_variates += len(df.columns) - 1
-
-    return n_series, total_variates
-
-
-def load_datasets_config(config_path: str) -> dict:
-    """加载 datasets.yaml 配置文件"""
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    return config
-
-
-def get_test_length(dataset_config: dict) -> int | None:
-    """
-    获取数据集的 test_length 值
-
-    Args:
-        dataset_config: 数据集特定配置
-
-    Returns:
-        test_length 值，如果未配置则返回 None
-    """
-    if dataset_config and "test_length" in dataset_config:
-        return dataset_config["test_length"]
-    return None
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Run tsfeatures extraction on preprocessed datasets.",
@@ -424,7 +345,6 @@ Examples:
 
     if args.all:
         # Process all datasets in config
-        summary_records = []
 
         for dataset_key in tqdm(datasets_config.keys(), desc="Processing datasets", unit="dataset"):
             dataset_name, freq = parse_dataset_key(dataset_key)
@@ -450,15 +370,6 @@ Examples:
                 print(f"[Info] test_length={test_length} < 500 for {dataset_key}, using full series instead")
                 effective_split_mode = "full"
 
-            n_series, n_variates = count_variates_in_dir(dataset_csv_dir)
-            summary_records.append({
-                "dataset": dataset_name,
-                "freq": freq,
-                "test_length": test_length,
-                "n_series": n_series,
-                "n_variates": n_variates
-            })
-
             compute_dataset_features(
                 dataset_name=dataset_name,
                 freq=freq,
@@ -468,23 +379,6 @@ Examples:
                 split_mode=effective_split_mode,
             )
 
-        # Save summary
-        if summary_records:
-            summary_df = pd.DataFrame(summary_records)
-            summary_csv_path = os.path.join(args.output_dir, "features", "summary.csv")
-            os.makedirs(os.path.dirname(summary_csv_path), exist_ok=True)
-            summary_df = pd.concat(
-                [summary_df, pd.DataFrame([{
-                    "dataset": "TOTAL",
-                    "freq": "-",
-                    "test_length": "-",
-                    "n_series": summary_df["n_series"].sum(),
-                    "n_variates": summary_df["n_variates"].sum()
-                }])],
-                ignore_index=True
-            )
-            summary_df.to_csv(summary_csv_path, index=False)
-            print(f"Summary saved to {summary_csv_path}")
 
     elif args.dataset:
         # Process single dataset

@@ -96,9 +96,7 @@ leaderboard_app/
 datasets/
 output/
 data/
-classic_data/
 plot_analyze/
-debug.py
 *.txt
 lightning_logs/
 timesfm/
@@ -106,3 +104,5 @@ hf_models/
 experiments/Kairos/
 granite-tsfm/
 local_tools/
+scripts/run_toto_2.sh
+scripts/run_toto_3.sh

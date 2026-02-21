@@ -2,13 +2,6 @@
 StatsForecast model wrappers for TIME benchmark.
 Adapted from gift_eval implementation.
 
-This module provides predictors that wrap statsforecast models
-to work with the TIME evaluation framework.
-
-Key difference from the original implementation:
-- SeasonalNaive now uses statsforecast's prediction intervals
-  to generate true probabilistic forecasts instead of replicating
-  point forecasts.
 """
 
 from typing import Iterator, List, Optional

@@ -73,7 +73,7 @@ def run_moirai_experiment(
             raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
-        output_dir = f"./output/results/moirai_{model_size}_New"
+        output_dir = f"./output/results/moirai_{model_size}"
 
     os.makedirs(output_dir, exist_ok=True)
 

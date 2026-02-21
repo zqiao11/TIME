@@ -348,9 +348,6 @@ def run_visiontspp_experiment(
         print("")
 
         fc_quantiles = np.stack(fc_quantiles, axis=0).astype(np.float32, copy=False)
-        num_total_instances = fc_quantiles.shape[0]
-        num_series = num_total_instances // num_windows
-        print(f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}")
 
         ds_config = f"{dataset_name}/{term}"
         model_hyperparams = {

@@ -43,7 +43,7 @@ DEFAULT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
 
 def run_tirex_experiment(
-    dataset_name: str = "TSBench_IMOS_v2/15T",
+    dataset_name: str,
     terms: list[str] | None = None,
     model_id: str = "NX-AI/TiRex",
     output_dir: str | None = None,
@@ -65,7 +65,7 @@ def run_tirex_experiment(
         quantile_levels = DEFAULT_QUANTILE_LEVELS
 
     if output_dir is None:
-        output_dir = "./output/results/tirex"
+        output_dir = "./output/results/TiRex"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -77,10 +77,7 @@ def run_tirex_experiment(
 
     print(f"  Loading TiRex model ({model_id})...")
 
-    model: ForecastModel = load_model(model_id, device="cuda")
-
-    if hasattr(model, "to"):
-        model = model.to(device)
+    model: ForecastModel = load_model(model_id, device=device)
 
     for term in terms:
         print(f"\n--- Term: {term} ---")
@@ -174,12 +171,6 @@ def run_tirex_experiment(
         print(f"\r    Processed {total_items}/{total_items} items. Done.")
 
         fc_quantiles = np.concatenate(fc_quantiles, axis=0).astype(np.float32, copy=False)
-        num_total_instances = fc_quantiles.shape[0]
-        num_series = num_total_instances // num_windows
-
-        print(
-            f"    Total instances: {num_total_instances}, Series: {num_series}, Windows: {num_windows}"
-        )
 
         ds_config = f"{dataset_name}/{term}"
         model_hyperparams = {
@@ -213,7 +204,7 @@ def main():
         "--dataset",
         type=str,
         nargs="+",
-        default=["IMOS/15T"],
+        default=["Global_Influenza/W"],
         help="Dataset name(s)",
     )
     parser.add_argument(
