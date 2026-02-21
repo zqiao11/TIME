@@ -53,7 +53,7 @@ Once the evaluations are complete, use the following script to aggregate the raw
 
 ```bash
 # Compute Overall Leaderboard based on `output/results` (sorted by MASE)
-python scripts/compute_overall_leaderboard.py
+python scripts/compute_local_leaderboard.py
 
 ```
 
@@ -132,8 +132,8 @@ To add a new model, follow these steps:
 ## Datasets and TSfeatures
 
 Our codebase provides utilities for data preprocessing and computing time series features. For detailed instructions, please refer to the documentation in the `docs/` directory:
-- [Data Format Specification](docs/DATA_FORMAT.md): CSV and Arrow format requirements
 - [Data Preprocessing Guide](docs/PREPROCESS.md): How to preprocess your datasets
+- [Data Format Specification](docs/DATA_FORMAT.md): CSV and Arrow format requirements
 - [Time Series Features](docs/FEATURES.md): Computing and using TSfeatures
 
 ### Adding New Datasets
@@ -155,10 +155,11 @@ If you want to add a new dataset to TIME:
    - Open a Pull Request with your changes
 
 4. **Review and integration**:
-   - After review and approval, we will:
+
+   After review and approval, we will:
      - Add your dataset to TIME
-     - Evaluate existing models on your new dataset
-     - Update the leaderboard with results
+     - Evaluate existing models on your new datasets
+     - Update the leaderboard with new results
 
 ## Citation
 

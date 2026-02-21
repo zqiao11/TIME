@@ -2,7 +2,7 @@
 Feature extraction runner for batch processing datasets.
 
 Usage:
-    python -m timebench.feature.features_runner --dataset IMOS/15T
+    python -m timebench.feature.features_runner --dataset Water_Quality_Darwin/15T
     python -m timebench.feature.features_runner --all
 
 Input format:
@@ -35,7 +35,6 @@ from timebench.evaluation.utils import (
     load_datasets_config,
     parse_dataset_key,
     get_test_length,
-    count_variates_in_dir,
     find_dataset_config,
 )
 
@@ -167,15 +166,15 @@ def compute_dataset_features(
     Compute and save the full set of time series features for a given dataset.
 
     Pipeline:
-        1. Load or generate the raw panel from the dataset CSV files.
-        2. Filter data based on split_mode and test_length.
+        1. Load CSV files and convert to panel format.
+        2. Filter data: if split_mode="test", keep only the last test_length timesteps per series.
         3. Preprocess the time series (interpolation, scaling, frequency analysis).
         4. Compute statistical and STL-based time series features.
         5. Merge all features with dataset statistics.
         6. Save the resulting feature DataFrame into the output directory.
 
     Args:
-        dataset_name: The name of the dataset (e.g., "IMOS", "ETTh1").
+        dataset_name: The name of the dataset (e.g., "Water_Quality_Darwin", "ETTh1").
         freq: Frequency string (e.g., "H", "D", "15T").
         csv_dir: Path to directory containing processed CSV files (*.csv).
         output_dir: Base directory for output files.
@@ -222,24 +221,15 @@ def compute_dataset_features(
     unique_ids = stats_df['unique_id'].tolist()
 
     # Step 1: Extract meta features from unique_id (from preprocess tags: [rw], [sp])
-    meta_start = time.perf_counter()
     meta_features_df = extract_meta_features_batch(unique_ids)
-    # Drop is_stationary (redundant with is_random_walk)
-    if 'is_stationary' in meta_features_df.columns:
-        meta_features_df = meta_features_df.drop(columns=['is_stationary'])
-    meta_time = time.perf_counter() - meta_start
-    print(f"[Timing] meta_features_df took {meta_time:.4f} seconds")
 
     # Step 2: Compute STL-based features (trend, seasonal, residual)
-    stl_start = time.perf_counter()
     stl_features_df = tsfeatures_with_uid_freq_map(
         series,
         uid_freq_map=uid_freq_map,
         features=[extended_stl_features],
         scale=False
     )
-    stl_time = time.perf_counter() - stl_start
-    print(f"[Timing] stl_features_df took {stl_time:.2f} seconds")
 
     # Merge all features
     features_df = meta_features_df.merge(stl_features_df, on='unique_id', how='left')
@@ -286,22 +276,22 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Process single dataset (expects data at ./data/processed_csv/IMOS/15T/*.csv)
+    # Process single dataset (expects data at ./data/processed_csv/Water_Quality_Darwin/15T/*.csv)
     # Uses test_length from config/datasets.yaml
-    python -m timebench.feature.features_runner --dataset IMOS/15T
+    python -m timebench.feature.features_runner --dataset Water_Quality_Darwin/15T
 
     # Process all datasets in config
     python -m timebench.feature.features_runner --all
 
     # Compute features on full series instead of last test_length timesteps
-    python -m timebench.feature.features_runner --dataset IMOS/15T --split full
+    python -m timebench.feature.features_runner --dataset Water_Quality_Darwin/15T --split full
         """
     )
     parser.add_argument(
         "--dataset",
         type=str,
         default="Oil_Price/B",
-        help="Dataset key in format '{name}/{freq}' (e.g., 'IMOS/15T')"
+        help="Dataset key in format '{name}/{freq}' (e.g., 'Water_Quality_Darwin/15T')"
     )
     parser.add_argument(
         "--all",
@@ -313,7 +303,7 @@ Examples:
         type=str,
         default="test",
         choices=["full", "test"],
-        help="Which portion to compute features on: 'full' (完整序列), 'test' (只在最后 test_length 个时间步上, 默认)"
+        help="Which portion to compute features on: 'full', 'test'"
     )
     parser.add_argument(
         "--config",

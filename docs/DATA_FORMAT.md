@@ -4,45 +4,34 @@
 
 ---
 
-##  CSV 文件格式要求
 
-### 格式规范
+### 预处理后的CSV文件目录结构
 
-**时间序列的CSV文件必须满足以下要求：**
+预处理后的CSV文件应按照以下目录结构组织，以便特征提取工具（`features_runner.py`）能够正确识别：
 
-| 要求 | 说明 |
-|------|------|
-| **第一列** | 必须是 timestamp（时间戳） |
-| **其他列** | 数值数据（时间序列的各个变量） |
-| **时间格式** | 可被 `pd.to_datetime()` 解析的格式 |
-
-### 正确的 CSV 格式示例
-
-```csv
-timestamp,temperature,humidity,pressure
-2024-01-01 00:00:00,25.3,60.2,1013.25
-2024-01-01 00:15:00,25.4,60.1,1013.30
-2024-01-01 00:30:00,25.5,59.8,1013.28
+```
+data/
+└── processed_csv/
+    └── {dataset_name}/
+        └── {freq}/
+            ├── item_0.csv
+            ├── item_1.csv
+            ├── item_2.csv
+            └── ...
 ```
 
-### 从 DataFrame 保存 CSV 的正确方式
-
-```python
-import pandas as pd
-
-# 创建 DataFrame
-df = pd.DataFrame({
-    "timestamp": pd.date_range("2024-01-01", periods=100, freq="15T"),
-    "temperature": [...],
-    "humidity": [...],
-})
-
-# ✅ 正确：timestamp 作为普通列保存（推荐）
-df.to_csv("data.csv", index=False)
-
-# ✅ 也正确：timestamp 作为 index 保存
-df.set_index("timestamp").to_csv("data.csv")
+**示例**：
 ```
+data/
+└── processed_csv/
+    └── Water_Quality_Darwin/
+        └── 15T/
+            ├── item_0.csv
+            ├── item_1.csv
+            └── item_2.csv
+```
+
+每个CSV文件代表一个时间序列样本（series），文件名为该样本的标识符（如 `item_0`, `item_1` 等）。
 
 ---
 
@@ -52,7 +41,7 @@ df.set_index("timestamp").to_csv("data.csv")
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Dataset (数据集)                         │
 │  ┌───────────────┐ ┌───────────────┐     ┌───────────────┐     │
-│  │  Sample 0     │ │  Sample 1     │ ... │  Sample N-1   │     │
+│  │  Series 0     │ │  Series 1     │ ... │  Series N-1   │     │
 │  │  (1个时间序列) │ │  (1个时间序列) │     │  (1个时间序列) │     │
 │  │               │ │               │     │               │     │
 │  │  可以是 UTS   │ │  可以是 MTS   │     │  可以是 MTS   │     │
@@ -65,15 +54,15 @@ df.set_index("timestamp").to_csv("data.csv")
 
 | 概念 | 说明 |
 |------|------|
-| **Dataset** | 包含 **多个** 时间序列 (samples/items) |
-| **Sample/Item** | **一个** 时间序列(series)，可以是 UTS 或 MTS |
+| **Dataset** | 包含多个时间序列 (samples/items) |
+| **Series/Item** | 一个时间序列(series)，可以是 UTS 或 MTS |
 | **UTS** | 单变量时间序列，`target` 形状为 `[1, T]` |
 | **MTS** | 多变量时间序列，`target` 形状为 `[D, T]` (D > 1) |
 
 ### Pandas 与 Dataset 的对应关系
 
 ```
-1 个 Pandas DataFrame  =  1 个 Time Series (Sample)
+1 个 Pandas DataFrame  =  1 个 Time Series (Series)
 List[DataFrame]        =  Dataset (包含多个 Time Series)
 ```
 
@@ -245,6 +234,7 @@ dataset_name/
 |----|------|------|
 | **第1列** | 时间戳 | 必须可被 `pd.to_datetime()` 解析 |
 | **第2~N列** | 数值 | 时间序列的各个变量/维度，`float` 类型 |
+| **列名格式** | 字符串 | 列名可包含标签后缀：`[rw]`, `[sp]`, `[drop]`（可选） |
 
 
 
@@ -271,6 +261,7 @@ dataset_name/
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ 3. 调用 dataframes_to_generator 创建生成器                                │
 │    - 将第1列设为时间索引                                                   │
+│    - 移除列名中的标签后缀 ([rw], [sp], [drop])                            │
 │    - 推断频率 (pd.infer_freq)                                             │
 │    - 根据 to_univariate 参数决定转换模式                                   │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -281,7 +272,7 @@ dataset_name/
         │  MTS 模式 (默认)     │         │  UTS 模式            │
         │  to_univariate=False│         │  to_univariate=True │
         ├─────────────────────┤         ├─────────────────────┤
-        │ 1个CSV = 1个Sample  │         │ 1个CSV = D个Sample  │
+        │ 1个CSV = 1个Series  │         │ 1个CSV = D个Series  │
         │ target: [D, T]      │         │ (D=列数)            │
         │                     │         │ target: [T]         │
         └─────────────────────┘         └─────────────────────┘
@@ -304,9 +295,9 @@ from timebench.evaluation.dataset_builder import build_dataset_from_csvs
 
 # 目录结构:
 # csv_dir/
-# ├── sensor_001.csv  (3列数据 × 1000行) → 1个 Sample, target: [3, 1000]
-# ├── sensor_002.csv  (3列数据 × 1200行) → 1个 Sample, target: [3, 1200]
-# └── sensor_003.csv  (3列数据 × 800行)  → 1个 Sample, target: [3, 800]
+# ├── sensor_001.csv  (3列数据 × 1000行) → 1个 Series, target: [3, 1000]
+# ├── sensor_002.csv  (3列数据 × 1200行) → 1个 Series, target: [3, 1200]
+# └── sensor_003.csv  (3列数据 × 800行)  → 1个 Series, target: [3, 800]
 
 dataset = build_dataset_from_csvs(
     csv_dir="/path/to/csv/files",
@@ -314,9 +305,9 @@ dataset = build_dataset_from_csvs(
     pattern="*.csv",
     freq="15T",
     to_univariate=False,  # MTS 模式
-    item_prefix="sensor_", # Prefix of each item/sample' name
 )
 # 结果: Dataset 包含 3 个 samples
+# item_id 自动从 CSV 文件名（不含扩展名）生成
 ```
 
 
@@ -327,9 +318,9 @@ dataset = build_dataset_from_csvs(
 ```python
 # 目录结构:
 # csv_dir/
-# ├── sensor_001.csv  (3列数据) → 3个 Samples (temp, humid, press)
-# ├── sensor_002.csv  (3列数据) → 3个 Samples
-# └── sensor_003.csv  (3列数据) → 3个 Samples
+# ├── sensor_001.csv  (3列数据) → 3个 Seriess (temp, humid, press)
+# ├── sensor_002.csv  (3列数据) → 3个 Seriess
+# └── sensor_003.csv  (3列数据) → 3个 Seriess
 
 dataset = build_dataset_from_csvs(
     csv_dir="/path/to/csv/files",
@@ -337,9 +328,12 @@ dataset = build_dataset_from_csvs(
     pattern="*.csv",
     freq="15T",
     to_univariate=True,  # UTS 模式
-    item_prefix="sensor_",
 )
 # 结果: Dataset 包含 9 个 samples (3 files × 3 columns)
+# item_id 命名规则：
+# - 多个CSV + 1个变量: item_id = csv文件名
+# - 1个CSV + 多个变量: item_id = 变量名
+# - 多个CSV + 多个变量: item_id = "{csv文件名}_{变量名}"
 ```
 
 
@@ -373,19 +367,3 @@ print(f"target shape: {np.array(sample['target']).shape}")
 batch = dataset[:10]  # 前10个样本
 targets = [np.array(t) for t in batch['target']]
 ```
-
----
-
-## 5. 数据格式验证
-
-使用 `analyze_dataset.py` 脚本验证转换后的数据集：
-
-```bash
-python src/timebench/evaluation/analyze_dataset.py
-```
-
----
-
-## 6. 下一步
-
-数据转换完成后，参考 [PRED_CONFIG.md](./PRED_CONFIG.md) 了解如何配置预测任务参数（`prediction_length`, `test_split`, `val_split`）。

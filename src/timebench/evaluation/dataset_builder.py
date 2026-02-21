@@ -271,7 +271,7 @@ def build_dataset_from_csvs(
     hf_dataset = Dataset.from_generator(gen_func, features=features)
     hf_dataset.save_to_disk(output_path)
     print(f"Dataset saved to {output_path}")
-    print(f"  - Number of samples: {len(hf_dataset)}")
+    print(f"  - Number of series: {len(hf_dataset)}")
     print(f"  - Features: {list(hf_dataset.features.keys())}")
 
     return hf_dataset

@@ -1,3 +1,5 @@
+# Codes are adapted from https://github.com/Nixtla/tsfeatures
+
 import re
 import warnings
 from typing import Callable, Dict, List, Literal, Optional, Tuple
@@ -41,8 +43,6 @@ PERIODS_MARGINS = {
     'Q':   [1],                        # 1Q
     'A':   [0]
 }
-
-
 
 
 # ========================
@@ -358,16 +358,14 @@ def _acf_lags(x: np.ndarray, max_lag: int = 10):
 
     return acfs[0], np.sum(acfs ** 2)
 
+
 def fast_acf_features(x: np.ndarray, freq: int = 1) -> Dict[str, float]:
     """
     Calculates ACF features using the accelerated helper function.
     Now includes diff1_acf features.
     """
-    # 1. 原始序列的 ACF 特征
     x_acf1, x_acf10 = _acf_lags(x, max_lag=10)
 
-    # 2. 一阶差分序列的 ACF 特征 (diff1_acf1)
-    # 计算差分序列: x[t] - x[t-1]
     diff1_x = np.diff(x)
     diff1_acf1, diff1_acf10 = _acf_lags(diff1_x, max_lag=10)
 
@@ -375,68 +373,44 @@ def fast_acf_features(x: np.ndarray, freq: int = 1) -> Dict[str, float]:
     return {
         'x_acf1': x_acf1,
         'x_acf10': x_acf10,
-        'diff1_acf1': diff1_acf1,   # 新增：差分后的一阶自相关
-        'diff1_acf10': diff1_acf10  # 顺带新增：差分后的自相关平方和
+        'diff1_acf1': diff1_acf1,
+        'diff1_acf10': diff1_acf10
     }
 
 
 def extract_meta_features_from_uid(unique_id: str) -> Dict[str, int]:
     """
-    从 unique_id（列名）中提取 preprocess 阶段标记的 meta features。
+    Extract meta features from unique_id (column name) with preprocessing markers.
 
-    Preprocess 阶段会在列名中添加标记：
-    - [rw]: random walk（随机游走，非平稳）
-    - [sp]: spike presence（存在瞬态尖峰）
+    Preprocessing adds markers to column names:
+    - [rw]: random walk (non-stationary)
+    - [sp]: spike presence
 
-    示例：
+    Examples:
     - "HUFL" -> {"is_random_walk": 0, "has_spike_presence": 0}
     - "HUFL[rw]" -> {"is_random_walk": 1, "has_spike_presence": 0}
     - "HUFL[sp]" -> {"is_random_walk": 0, "has_spike_presence": 1}
     - "HUFL[sp,rw]" -> {"is_random_walk": 1, "has_spike_presence": 1}
 
-    Parameters
-    ----------
-    unique_id : str
-        变量名（可能包含标记后缀）
+    Args:
+        unique_id: Variable name (may contain marker suffixes)
 
-    Returns
-    -------
-    dict
-        {
-            'is_random_walk': 0/1,
-            'has_spike_presence': 0/1,
-            'is_stationary': 0/1  (is_random_walk 的反义)
-        }
+    Returns:
+        Dictionary with 'is_random_walk' and 'has_spike_presence'
     """
-    # 检查是否包含 [rw] 标记
     is_random_walk = 1 if "[rw]" in unique_id or ",rw]" in unique_id or "[rw," in unique_id else 0
 
-    # 检查是否包含 [sp] 标记
     has_spike_presence = 1 if "[sp]" in unique_id or ",sp]" in unique_id or "[sp," in unique_id else 0
-
-    # is_stationary 是 is_random_walk 的反义
-    is_stationary = 1 - is_random_walk
 
     return {
         "is_random_walk": is_random_walk,
         "has_spike_presence": has_spike_presence,
-        "is_stationary": is_stationary,
     }
 
 
 def extract_meta_features_batch(unique_ids: List[str]) -> pd.DataFrame:
     """
-    批量从 unique_id 列表中提取 meta features。
-
-    Parameters
-    ----------
-    unique_ids : List[str]
-        变量名列表
-
-    Returns
-    -------
-    pd.DataFrame
-        包含 unique_id 和 meta features 的 DataFrame
+    Extract meta features from a list of unique IDs.
     """
     records = []
     for uid in unique_ids:
@@ -445,175 +419,8 @@ def extract_meta_features_batch(unique_ids: List[str]) -> pd.DataFrame:
         records.append(meta)
 
     df = pd.DataFrame(records)
-    # 调整列顺序，把 unique_id 放在第一列
     cols = ["unique_id"] + [c for c in df.columns if c != "unique_id"]
     return df[cols]
-
-
-# ========================
-# Legacy functions (deprecated, kept for backward compatibility)
-# ========================
-def is_stationary(x: np.array, freq: int = 1, alpha: float = 0.05) -> dict:
-    """
-    [DEPRECATED] 使用 ADF 检验判断平稳性。
-    建议使用 extract_meta_features_from_uid() 从 preprocess 阶段的标记中获取。
-
-    Parameters
-    ----------
-    x : np.array
-        Time series
-    freq : int
-        Frequency of the time series (unused)
-    alpha : float
-        Significance level (default 0.05)
-
-    Returns
-    -------
-    dict
-        {'is_stationary': 0/1}
-    """
-    try:
-        pval_adf = adfuller(x, autolag="AIC")[1]
-        adf_stationary = int(pval_adf < alpha)
-    except Exception:
-        adf_stationary = 1  # 默认平稳
-
-    return {
-        "is_stationary": adf_stationary,
-    }
-
-
-def spike_presence(x: np.array, freq: int = 1) -> Dict[str, float]:
-    """
-    [DEPRECATED] 使用 MAD 方法检测异常值比例。
-    建议使用 extract_meta_features_from_uid() 从 preprocess 阶段的标记中获取。
-
-    Parameters
-    ----------
-    x : np.array
-        Time series
-    freq : int
-        Frequency (unused)
-
-    Returns
-    -------
-    dict
-        {'has_spike_presence': 0/1}
-    """
-    try:
-        median = np.median(x)
-        mad = np.median(np.abs(x - median))
-        if mad == 0:
-            return {"has_spike_presence": 0}
-
-        modified_z = 0.6745 * (x - median) / mad
-        outlier_ratio = np.mean(np.abs(modified_z) > 3.5)
-        has_spike = int(outlier_ratio >= 0.05)
-    except Exception:
-        has_spike = 0
-
-    return {
-        "has_spike_presence": has_spike,
-    }
-
-
-# Alias for backward compatibility
-outlier_presence = spike_presence
-
-
-# def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
-#     m = freq
-#     nperiods = int(m > 1)
-
-#     # Compute entropy on raw series (before STL decomposition)
-#     # This measures the predictability/signal-to-noise ratio of the original time series
-#     x_entropy = entropy(x, m)['entropy']
-
-#     # STL fits
-#     if m > 1:
-#         try:
-#             stlfit = STL(x, m, 13).fit()
-#         except:
-#             return {
-#                 'nperiods': nperiods, 'seasonal_period': m,
-#                 'x_entropy': x_entropy,
-#                 'trend_strength': np.nan, 'trend_stability': np.nan, 'trend_hurst': np.nan,
-#                 'e_acf1': np.nan, 'e_acf10': np.nan, 'e_entropy': np.nan,
-#                 'seasonal_strength': np.nan,'seasonal_corr': np.nan, 'seasonal_lumpiness': np.nan
-#             }
-#         trend0 = stlfit.trend
-#         remainder = stlfit.resid
-#         seasonal = stlfit.seasonal
-#     else:
-#         deseas = x
-#         t = np.arange(len(x)) + 1
-#         try:
-#             trend0 = SuperSmoother().fit(t, deseas).predict(t)
-#         except:
-#             return {
-#                 'nperiods': nperiods, 'seasonal_period': m,
-#                 'x_entropy': x_entropy,
-#                 'trend_strength': np.nan, 'trend_stability': np.nan, 'trend_hurst': np.nan,
-#                 'e_acf1': np.nan, 'e_acf10': np.nan, 'e_entropy': np.nan,
-#                 'seasonal_strength': np.nan,'seasonal_corr': np.nan, 'seasonal_lumpiness': np.nan
-#             }
-#         remainder = deseas - trend0
-#         seasonal = np.zeros(len(x))
-
-#     # Decomposition stats
-#     detrend = x - trend0
-#     deseason = x - seasonal
-#     varx = np.nanvar(x, ddof=1)
-#     vare = np.nanvar(remainder, ddof=1)
-#     vardeseason = np.nanvar(deseason, ddof=1)
-#     trend = 0 if varx < 1e-10 or vardeseason / varx < 1e-10 else max(0, min(1, 1 - vare / vardeseason))
-
-#     if m > 1:
-#         season = 0 if varx < 1e-10 or np.nanvar(remainder + seasonal, ddof=1) < 1e-10 else max(0, min(1, 1 - vare / np.nanvar(remainder + seasonal, ddof=1)))
-
-#     # E ACF features & Entropy
-#     e_acf = fast_acf_features(remainder)
-#     e_entropy = entropy(remainder, m)['entropy']
-#     e_arch_lm = arch_stat(remainder, m)['ARCH.LM']
-
-#     # Trend stability & hurst
-#     trend_stability = stability(trend0, m)['stability']
-#     trend_hurst = hurst(trend0, m)['hurst']
-#     trend_nonlinearity = nonlinearity(trend0, m)['nonlinearity']
-
-#     # Seasonality stability
-#     try:
-#         S = seasonal[:len(seasonal) // m * m]
-#         segments = S.reshape(-1, m)
-#         corrs = [np.corrcoef(segments[i], segments[j])[0, 1]
-#                  for i in range(len(segments)) for j in range(i + 1, len(segments))]
-#         seasonal_corr = np.mean(corrs) if corrs else np.nan
-#     except:
-#         seasonal_corr = np.nan
-
-#     # Seasonal stability/lumpiness
-#     seasonal_lumpiness = lumpiness(seasonal, m)['lumpiness']
-
-#     # Output
-#     output = {
-#         'x_entropy': x_entropy,  # Entropy of raw series (predictability/signal-to-noise)
-#         'trend_strength': trend,
-#         'trend_stability': trend_stability,
-#         'trend_hurst': trend_hurst,
-#         'trend_nonlinearity': trend_nonlinearity,
-#         'e_acf1': e_acf['x_acf1'],
-#         'e_diff1_acf1': e_acf['diff1_acf1'],
-#         'e_acf10': e_acf['x_acf10'],
-#         'e_entropy': e_entropy,
-#         'e_arch_lm': e_arch_lm,
-#     }
-
-#     if m > 1:
-#         output['seasonal_strength'] = season
-#         output['seasonal_corr'] = seasonal_corr
-#         output['seasonal_lumpiness'] = seasonal_lumpiness
-
-#     return output
 
 
 def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
@@ -622,7 +429,7 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
     linearity, curvature, and spike.
     """
     m = freq
-    n = len(x) # 需要明确定义序列长度 n
+    n = len(x)
     nperiods = int(m > 1)
 
     # Compute entropy on raw series
@@ -633,7 +440,7 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
         try:
             stlfit = STL(x, m, 13).fit()
         except:
-            return _get_empty_output(nperiods, m, x_entropy) # 封装了原本的 nan 返回逻辑
+            return _get_empty_output(nperiods, m, x_entropy)
         trend0 = stlfit.trend
         remainder = stlfit.resid
         seasonal = stlfit.seasonal
@@ -673,11 +480,10 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
     varloo = (vare * (n - 1) - d) / (n - 2) # Leave-one-out variance
     spike = np.nanvar(varloo, ddof=1)
 
-    # --- ### NEW: Linearity & Curvature Calculation ### ---
+    # --- ### Linearity & Curvature Calculation ### ---
     # Based on orthogonal quadratic regression of the trend
     time = np.arange(n) + 1
     try:
-        # 注意：这里需要确保 scope 中有 poly 函数
         poly_m = poly(time, 2)
         time_x = add_constant(poly_m)
         coefs = OLS(trend0, time_x).fit().params
@@ -721,11 +527,9 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
         'trend_stability': trend_stability,
         'trend_hurst': trend_hurst,
         'trend_nonlinearity': trend_nonlinearity,
-        # 新增的 features
         'spike': spike,
         'linearity': linearity,
         'curvature': curvature,
-        # 其他
         'e_acf1': e_acf['x_acf1'],
         'e_diff1_acf1': e_acf['diff1_acf1'],
         'e_acf10': e_acf['x_acf10'],
