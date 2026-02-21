@@ -1,11 +1,18 @@
-# TIME: Time Series Benchmarking Framework
+# It's TIME: Towards the Next Generation of Time Series Forecasting Benchmarks
 
-A comprehensive framework for time series forecasting benchmarking, providing a full workflow spanning from data collection to model evaluation.
+
+[![arXiv](https://img.shields.io/badge/arxiv-2602.12147-b31b1b.svg)](https://arxiv.org/abs/2602.12147)
+[![huggingface](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Dataset-FFD21E)](https://huggingface.co/datasets/Real-TSF/TIME/tree/main)
+[![huggingface](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-LeaderBoard-FFD21E)](https://huggingface.co/spaces/Real-TSF/TIME-leaderboard)
+[![huggingface](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-CSVFiles-FFD21E)](https://huggingface.co/datasets/Real-TSF/TIME-ProcessedCSV)
+[![huggingface](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Results&Features-FFD21E)](https://huggingface.co/datasets/Real-TSF/TIME-Output)
+
+TIME is a task-centric time series forecasting benchmark comprising various fresh datasets, tailored for strict zero-shot TSFM evaluation free from data leakage. This codebase provides a full workflow spanning from data preprocessing to model evaluation.
 
 
 ## Installation
 
-We recommend using Conda to manage the environment
+1. We recommend using Conda to manage the environment
 
 ```bash
 conda create -n timebench python=3.11 -y
@@ -13,13 +20,198 @@ conda activate timebench
 pip install -e .
 ```
 
-Define the output path for processed HF datasets in .env. If you have no specific preference, you can set it to `ROOT_PATH/TIME/data/hf_dataset`. [Used as `storage_env_var` in [`Dataset`](src/timebench/evaluation/data.py#L120). This implementation follows Gift-Eval and may be subject to change.]
+2. Download the dataset from [huggingface](https://huggingface.co/datasets/Real-TSF/TIME)
+
+3. Define the path for HF datasets in `.env`. (Used as `storage_env_var` in [`Dataset`](src/timebench/evaluation/data.py#L120)).
 
 ```bash
-echo "GIFT_EVAL=PATH_TO_SAVE" >> .env
+echo "TIME_DATASET=PATH_TO_DATASET" >> .env
 ```
 
-## Overview
+## Getting Started
+
+### Model Forecasting
+We provide the complete codebase and scripts required to reproduce all results from our benchmark.
+
+For each model, use the corresponding script in the `scripts/` directory to automatically set up the Conda environment and run evaluations across all tasks.
+
+⚠️ **Important Note**: Please ensure the script's Conda environment name doesn't conflict with your existing ones..
+
+```
+# Example: Running the evaluation for Chronos2
+bash scripts/run_chronos2.sh
+
+# We recommand using nohup to run the scripts in the background
+nohup bash scripts/run_chronos2.sh > run_chronos2.txt 2>&1 &
+```
+
+For each task, window-level predictions (quantiles) and metrics will be saved in `output/results/{model_name}/{dataset}/{freq}/{term}/`.
+
+### Compute Overall Metrics
+
+Once the evaluations are complete, use the following script to aggregate the raw outputs into the overall metrics in leaderboard. This process automatically fetches the Seasonal Naive results from Hugging Face and computes the aggregated metrics across all tasks.
+
+```bash
+# Compute Overall Leaderboard based on `output/results` (sorted by MASE)
+python scripts/compute_overall_leaderboard.py
+
+```
+
+For deeper analysis, including dataset-level breakdowns, pattern-level evaluation and visualizations, you can download and locally run our [Leaderboard App](https://huggingface.co/spaces/Real-TSF/TIME-Leaderboard).
+
+
+## Run Your Own Model
+
+To add a new model, follow these steps:
+
+1. **Implement your model in `experiments/`**
+
+   Create a new Python script in the `experiments/` directory (e.g., `experiments/your_model.py`). You can use existing implementations like `experiments/chronos2.py` as a reference template.
+
+-  **Use the Dataset class**
+
+   The `Dataset` class is adapted from [Gift-Eval](https://github.com/SalesforceAIResearch/gift-eval/blob/main/src/gift_eval/data.py) and provides a unified interface for loading time series data:
+   ```python
+   from timebench.evaluation.data import Dataset, get_dataset_settings, load_dataset_config
+
+   # ⚠️ Important: Set to_univariate based on your model's capabilities
+   # If your model only supports univariate forecasting:
+   to_univariate = False if Dataset(name=dataset_name, term=term, to_univariate=False).target_dim == 1 else True
+
+   # If your model supports multivariate forecasting natively:
+   to_univariate = False
+
+   dataset = Dataset(
+       name=dataset_name,
+       term=term,  # "short", "medium", or "long"
+       to_univariate=to_univariate,
+       prediction_length=prediction_length,
+       test_length=test_length,
+       val_length=val_length,
+   )
+   ```
+
+-  **Generate predictions and save results**
+
+   TIME uses a flexible evaluation interface that doesn't rely on GluonTS. Simply compute quantile predictions (`fc_quantiles`) externally and pass them to `save_window_predictions`:
+
+   ```python
+   from timebench.evaluation.saver import save_window_predictions
+
+   # Generate fc_quantiles with shape:
+   # - (num_total_instances, num_quantiles, prediction_length) for univariate
+   # - (num_total_instances, num_quantiles, num_variates, prediction_length) for multivariate
+   # where num_total_instances = num_series_exp * num_windows
+
+   save_window_predictions(
+       dataset=dataset,
+       fc_quantiles=fc_quantiles,
+       ds_config=f"{dataset_name}/{freq}/{term}",
+       output_base_dir="output/results",
+       seasonality=season_length,
+       model_hyperparams={"model_name": "your_model"},
+   )
+   ```
+
+   This function automatically computes per-window metrics and saves predictions, metrics, and configuration files to `output/results/{model_name}/{dataset}/{freq}/{term}/`.
+
+2. **Create a run script in `scripts/`**
+
+   Create a shell script (e.g., `scripts/run_your_model.sh`) to run your model across all tasks. The script should:
+   - Set up the Conda environment with required dependencies
+   - Call your experiment script for each task
+   - Include specific hyperparams configuration and ensure reproducibility
+
+### Submit Results to TIME Leaderboard
+
+   Once your evaluation is complete and you are ready to feature on the TIME leaderboard:
+   - Open a Pull Request  to upload your `output/results/{model_name}/` folder to the [TIME-Output repository](https://huggingface.co/datasets/Real-TSF/TIME-Output/tree/main/results) on Hugging Face.
+   - The results will be automatically included in the leaderboard after review
+    - To ensure reproducibility, we highly recommend contributing your experiment code and execution scripts to this GitHub repository.
+
+## Datasets and TSfeatures
+
+Our codebase provides utilities for data preprocessing and computing time series features. For detailed instructions, please refer to the documentation in the `docs/` directory:
+- [Data Format Specification](docs/DATA_FORMAT.md): CSV and Arrow format requirements
+- [Data Preprocessing Guide](docs/PREPROCESS.md): How to preprocess your datasets
+- [Time Series Features](docs/FEATURES.md): Computing and using TSfeatures
+
+### Adding New Datasets
+
+If you want to add a new dataset to TIME:
+
+1. **Preprocess your data** following the documentation in `docs/`:
+   - Generate processed CSV files
+   - Create HuggingFace Datasets (hf_dataset)
+   - Compute time series features
+
+2. **Upload processed data to HuggingFace**:
+   - Upload processed CSV files to [TIME-ProcessedCSV](https://huggingface.co/datasets/Real-TSF/TIME-ProcessedCSV)
+   - Upload hf_dataset to [TIME](https://huggingface.co/datasets/Real-TSF/TIME)
+   - Upload features to [TIME-Output](https://huggingface.co/datasets/Real-TSF/TIME-Output/tree/main/features)
+
+3. **Update the configuration**:
+   - Update `src/timebench/config/datasets.yaml` on GitHub to include your forecasting tasks
+   - Open a Pull Request with your changes
+
+4. **Review and integration**:
+   - After review and approval, we will:
+     - Add your dataset to TIME
+     - Evaluate existing models on your new dataset
+     - Update the leaderboard with results
+
+## Citation
+
+If you find this benchmark useful, please consider citing:
+```
+@article{qiao2026s,
+  title={It's TIME: Towards the Next Generation of Time Series Forecasting Benchmarks},
+  author={Qiao, Zhongzheng and Pan, Sheng and Wang, Anni and Zhukova, Viktoriya and Liu, Yong and Jiang, Xudong and Wen, Qingsong and Long, Mingsheng and Jin, Ming and Liu, Chenghao},
+  journal={arXiv preprint arXiv:2602.12147},
+  year={2026}
+}
+```
+
+<!-- ## Data Preprocessing
+
+## Configuration
+
+Dataset and prediction configurations are stored in `config/datasets.yaml`. Each dataset can specify:
+
+- `test_split`: Test set ratio (shared across all terms)
+- `val_split`: Validation set ratio (optional)
+- `prediction_length`: Prediction length for each term (short, medium, long)
+
+Windows are automatically calculated based on `test_split` and `prediction_length` to ensure fair comparison across different terms.
+
+**Example**:
+
+```yaml
+datasets:
+  Water_Quality_Darwin/15T:
+    test_split: 0.1
+    val_split: 0.1
+    short:
+      prediction_length: 16     # 16 * 15min = 4 hours
+    medium:
+      prediction_length: 96    # 96 * 15min = 1 day
+    long:
+      prediction_length: 672   # 672 * 15min = 7 days
+``` -->
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- ## Data Processing
+
 
 TIME provides a complete workflow for time series benchmarking:
 
@@ -33,11 +225,6 @@ After preprocessing and configuration, the pipeline splits into two parallel bra
 
 ## Pipeline Architecture
 
-### 1. Data Curation (数据收集)
-
-Due to the varying methods required for data scraping, this stage is not included in the main framework. However, we provide some sample crawling scripts for reference.
-
----
 
 ### 2. Preprocessing (数据预处理)
 
@@ -240,42 +427,15 @@ Due to the varying methods required for data scraping, this stage is not include
 
    ```bash
    python experiments/moirai.py --dataset "Water_Quality_Darwin/15T" --terms short medium long
-   ```
+   ``` -->
 
 
-## Configuration
 
-Dataset and prediction configurations are stored in `config/datasets.yaml`. Each dataset can specify:
-
-- `test_split`: Test set ratio (shared across all terms)
-- `val_split`: Validation set ratio (optional)
-- `prediction_length`: Prediction length for each term (short, medium, long)
-
-Windows are automatically calculated based on `test_split` and `prediction_length` to ensure fair comparison across different terms.
-
-**Example**:
-
-```yaml
-datasets:
-  Water_Quality_Darwin/15T:
-    test_split: 0.1
-    val_split: 0.1
-    short:
-      prediction_length: 16     # 16 * 15min = 4 hours
-    medium:
-      prediction_length: 96    # 96 * 15min = 1 day
-    long:
-      prediction_length: 672   # 672 * 15min = 7 days
-```
-
-See [docs/PRED_CONFIG.md](docs/PRED_CONFIG.md) for detailed configuration guide.
-
-
-## Documentation
+<!-- ## Documentation
 
 - [Data Format Specification](docs/DATA_FORMAT.md): CSV and Arrow format requirements
 - [Preprocessing Guide](docs/PREPROCESS.md): Data cleaning and validation pipeline
 - [Feature Extraction Guide](docs/FEATURES.md): Statistical and temporal feature computation
 - [Prediction Configuration](docs/PRED_CONFIG.md): Setting up prediction tasks
 - [Evaluation Guide](docs/EVALUATION.md): Model evaluation workflow
-
+ -->
