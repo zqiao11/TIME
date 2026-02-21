@@ -9,8 +9,11 @@
 
 TIME is a task-centric time series forecasting benchmark comprising various fresh datasets, tailored for strict zero-shot TSFM evaluation free from data leakage. This codebase provides a full workflow spanning from data preprocessing to model evaluation.
 
+## 📅 Update Log
+* **2026 Feb **: Initial release of TIME codebase.
 
-## Installation
+
+## ⚙️ Installation
 
 1. We recommend using Conda to manage the environment
 
@@ -28,7 +31,7 @@ pip install -e .
 echo "TIME_DATASET=PATH_TO_DATASET" >> .env
 ```
 
-## Getting Started
+## 🚀 Getting Started
 
 ### Model Forecasting
 We provide the complete codebase and scripts required to reproduce all results from our benchmark.
@@ -60,7 +63,7 @@ python scripts/compute_local_leaderboard.py
 For deeper analysis, including dataset-level breakdowns, pattern-level evaluation and visualizations, you can download and locally run our [Leaderboard App](https://huggingface.co/spaces/Real-TSF/TIME-Leaderboard).
 
 
-## Run Your Own Model
+## 💻 Run Your Own Model
 
 To add a new model, follow these steps:
 
@@ -129,7 +132,7 @@ To add a new model, follow these steps:
    - The results will be automatically included in the leaderboard after review
     - To ensure reproducibility, we highly recommend contributing your experiment code and execution scripts to this GitHub repository.
 
-## Datasets and TSfeatures
+## 📊 Datasets and TSfeatures
 
 Our codebase provides utilities for data preprocessing and computing time series features. For detailed instructions, please refer to the documentation in the `docs/` directory:
 - [Data Preprocessing Guide](docs/PREPROCESS.md): How to preprocess your datasets
