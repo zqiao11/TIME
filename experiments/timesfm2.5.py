@@ -155,13 +155,11 @@ def run_timesfm_experiment(
         # eval_data is an iterable of dictionaries. We need to batch inputs for TimesFM.
         # Each item has 'target' (history) and 'label' (ground truth).
         all_inputs = []
-        all_ground_truths = []
 
         for inp, label in eval_data:
             # TimesFM expects 1D numpy arrays for univariate
             history = inp["target"]
             all_inputs.append(history)
-            all_ground_truths.append(label["target"])
 
         num_total_instances = len(all_inputs)
         print(f"    Total instances to forecast: {num_total_instances}")

@@ -59,7 +59,7 @@ def _get_model_config(model_size: str) -> dict:
 
 
 def run_timesfm_experiment(
-    dataset_name: str = "TSBench_IMOS_v2/15T",
+    dataset_name: str,
     terms: list[str] = None,
     model_size: str = "base",
     output_dir: str | None = None,

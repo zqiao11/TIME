@@ -8,7 +8,6 @@ Usage:
     python experiments/chronos2.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
     python experiments/chronos2.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/chronos2.py --dataset all_datasets  # Run all datasets from config
-    python experiments/chronos2.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
@@ -41,7 +40,7 @@ logging.getLogger("chronos").setLevel(logging.ERROR)
 
 
 def run_chronos2_experiment(
-    dataset_name: str = "TSBench_IMOS_v2/15T",
+    dataset_name: str,
     terms: list[str] = None,
     model_size: str = "chronos2",
     output_dir: str | None = None,
@@ -70,7 +69,7 @@ def run_chronos2_experiment(
         quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
     if output_dir is None:
-        output_dir = f"./output/results/chronos2_{model_size}"
+        output_dir = f"./output/results/chronos2_{model_size}_New"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -140,12 +139,9 @@ def run_chronos2_experiment(
         def _prepare_context(d):
             target = np.asarray(d["target"])
 
-            if target.ndim == 2 and target.shape[0] > target.shape[1]:
-                target = target.T
-
             # Manually truncate context
             seq_len = target.shape[-1]
-            if context_length is not None and seq_len > context_length:
+            if seq_len > context_length:
                 target = target[..., -context_length:]
 
             if target.ndim == 1:
@@ -164,6 +160,7 @@ def run_chronos2_experiment(
             # Load context only for current batch
             batch_contexts = [_prepare_context(eval_input_list[i]) for i in range(start, end)]
 
+            # Filter out verbose warnings from Chronos-2 during prediction to keep output clean
             class ContentFilterStderr:
                 def __init__(self, original_stream):
                     self.original_stream = original_stream
@@ -188,32 +185,21 @@ def run_chronos2_experiment(
             finally:
                 sys.stderr = original_stderr
 
-            # Handle return types (Tensor vs List) and convert to numpy
-            if isinstance(batch_q, torch.Tensor):
-                if batch_q.ndim == 4 and batch_q.shape[-1] == len(quantile_levels):
-                    # Shape: (batch, num_variates, pred_len, num_quantiles) -> (batch, num_quantiles, num_variates, pred_len)
-                    batch_q = batch_q.permute(0, 3, 1, 2)
+            batch_quantiles_list = []
+            for q in batch_q:
+                if isinstance(q, torch.Tensor):
+                    if q.ndim == 3 and q.shape[-1] == len(quantile_levels):
+                        # Shape: (num_variates, pred_len, num_quantiles) -> (num_quantiles, num_variates, pred_len)
+                        q = q.permute(2, 0, 1)
+                    q = q.cpu().float().numpy()
+                # q shape: (num_quantiles, num_variates, prediction_length)
+                # Add batch dimension: (1, num_quantiles, num_variates, prediction_length)
+                batch_quantiles_list.append(q[np.newaxis, ...])
 
-                batch_q = batch_q.cpu().float().numpy()
-                # batch_q shape: (batch_size, num_quantiles, num_variates, prediction_length)
-                fc_quantiles_batches.append(batch_q)
 
-            elif isinstance(batch_q, list):
-                batch_quantiles_list = []
-                for q in batch_q:
-                    if isinstance(q, torch.Tensor):
-                        if q.ndim == 3 and q.shape[-1] == len(quantile_levels):
-                            # Shape: (num_variates, pred_len, num_quantiles) -> (num_quantiles, num_variates, pred_len)
-                            q = q.permute(2, 0, 1)
-                        q = q.cpu().float().numpy()
-                    # q shape: (num_quantiles, num_variates, prediction_length)
-                    # Add batch dimension: (1, num_quantiles, num_variates, prediction_length)
-                    batch_quantiles_list.append(q[np.newaxis, ...])
-
-                if batch_quantiles_list:
-                    # Stack into batch: (batch_size, num_quantiles, num_variates, prediction_length)
-                    batch_q_array = np.concatenate(batch_quantiles_list, axis=0)
-                    fc_quantiles_batches.append(batch_q_array)
+            # Stack into batch: (batch_size, num_quantiles, num_variates, prediction_length)
+            batch_q_array = np.concatenate(batch_quantiles_list, axis=0)
+            fc_quantiles_batches.append(batch_q_array)
 
             # Optional progress logging
             if (start // batch_size + 1) % 10 == 0:
@@ -221,10 +207,7 @@ def run_chronos2_experiment(
 
         # Concatenate all batches into a single array
         # Shape: (num_total_instances, num_quantiles, num_variates, prediction_length)
-        if fc_quantiles_batches:
-            fc_quantiles = np.concatenate(fc_quantiles_batches, axis=0)
-        else:
-            raise ValueError("No predictions generated")
+        fc_quantiles = np.concatenate(fc_quantiles_batches, axis=0)
 
         # ---------------------------------------------------------
         # 3. Saving Results
@@ -257,7 +240,7 @@ def run_chronos2_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Chronos experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["ECDC_COVID/W"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["Global_Influenza/W"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets'")
     parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
@@ -282,7 +265,7 @@ def main():
 
     args = parser.parse_args()
 
-    # [Logic] Handle dataset list or 'all_datasets'
+    # Handle dataset list or 'all_datasets'
     config_path = Path(args.config) if args.config else None
 
     if len(args.dataset) == 1 and args.dataset[0] == "all_datasets":
@@ -295,7 +278,7 @@ def main():
     else:
         datasets = args.dataset
 
-    # [Logic] Iterate over all datasets with progress logging
+    # Iterate over all datasets with progress logging
     total_datasets = len(datasets)
     for idx, dataset_name in enumerate(datasets, 1):
         print(f"\n{'#'*60}")
