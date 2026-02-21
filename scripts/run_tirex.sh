@@ -1,6 +1,6 @@
 #!/bin/bash
 # TiRex experiments for all datasets
-# Generated from datasets.yaml; 48 dataset/freq combinations
+# Generated from datasets.yaml
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
