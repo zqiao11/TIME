@@ -7,7 +7,6 @@ Usage:
     python experiments/moirai.py --dataset "TSBench_IMOS_v2/15T" --terms short medium long
     python experiments/moirai.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/moirai.py --dataset all_datasets  # Run all datasets from config
-    python experiments/moirai.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
@@ -17,6 +16,7 @@ import sys
 from pathlib import Path
 
 import torch
+import numpy as np
 
 # Ensure timebench is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -25,7 +25,8 @@ from dotenv import load_dotenv
 from gluonts.time_feature import get_seasonality
 from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
 
-from timebench.evaluation import save_window_predictions
+from timebench.evaluation.saver import save_window_predictions
+from timebench.evaluation.utils import get_available_terms
 from timebench.evaluation.data import (
     Dataset,
     get_dataset_settings,
@@ -35,33 +36,16 @@ from timebench.evaluation.data import (
 # Load environment variables
 load_dotenv()
 
-# patch_size_dict = {"S": 64, "T": 32, "H": 32, "D": 16, "B": 16, "W": 16, "M": 8, "Q": 8, "Y": 8, "A": 8}
-
-def get_available_terms(dataset_name: str, config: dict) -> list[str]:
-    """Get the terms that are actually defined in the config for a dataset."""
-    datasets_config = config.get("datasets", {})
-    if dataset_name not in datasets_config:
-        return []
-
-    dataset_config = datasets_config[dataset_name]
-    available_terms = []
-    for term in ["short", "medium", "long"]:
-        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
-            available_terms.append(term)
-    return available_terms
-
 
 def run_moirai_experiment(
-    dataset_name: str = "TSBench_IMOS_v2/15T",
+    dataset_name,
     terms: list[str] = None,
     model_size: str = "small",
     output_dir: str | None = None,
     batch_size: int = 512,
     num_samples: int = 100,
     context_length: int = 4000,
-    cuda_device: str = "0",
     config_path: Path | None = None,
-    use_val: bool = False,
 ):
     """
     Run Moirai model experiments on a dataset with specified terms.
@@ -75,12 +59,8 @@ def run_moirai_experiment(
         batch_size: Batch size for prediction
         num_samples: Number of samples for probabilistic forecasting
         context_length: Maximum context length
-        cuda_device: CUDA device ID
         config_path: Path to datasets.yaml config file
-        use_val: If True, evaluate on validation data (for hyperparameter selection, no saving)
     """
-    # Set CUDA device
-    os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
 
     # Load dataset configuration
     print("Loading configuration...")
@@ -93,14 +73,13 @@ def run_moirai_experiment(
             raise ValueError(f"No terms defined for dataset '{dataset_name}' in config")
 
     if output_dir is None:
-        output_dir = f"./output/results/moirai_{model_size}"
+        output_dir = f"./output/results/moirai_{model_size}_New"
 
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"\n{'='*60}")
     print(f"Dataset: {dataset_name}")
     print(f"Terms: {terms}")
-    print(f"Evaluation on: {'Validation data (no saving)' if use_val else 'Test data'}")
     print(f"{'='*60}")
 
     for term in terms:
@@ -115,9 +94,7 @@ def run_moirai_experiment(
         print(f"  Config: prediction_length={prediction_length}, test_length={test_length}, val_length={val_length}")
 
         # Moirai hyperparameter (constant across all terms)
-        # freq = dataset_name.split("/")[1]           # 例如 "15T", "H", "5T"
-        # freq_unit = freq.lstrip('0123456789')       # 去掉前面的数字: "15T" -> "T", "H" -> "H"
-        patch_size = 32  # patch_size_dict[freq_unit]     # 用单位查找 patch_size
+        patch_size = 32
 
         # Try multivariate first, fallback to univariate on OOM
         for to_univariate in [False, True]:
@@ -146,15 +123,9 @@ def run_moirai_experiment(
                 val_length=val_length,
             )
 
-            # Calculate actual test/val length (based on min series length)
-            if use_val:
-                data_length = val_length
-                num_windows = dataset.val_windows
-                split_name = "Val split"
-            else:
-                data_length = test_length
-                num_windows = dataset.windows
-                split_name = "Test split"
+            data_length = test_length
+            num_windows = dataset.windows
+            split_name = "Test split"
 
             print("  Dataset info:")
             print(f"    - Mode: {mode_name}")
@@ -171,38 +142,59 @@ def run_moirai_experiment(
             model.hparams.target_dim = 1 if to_univariate else dataset.target_dim
             model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
 
-            predictor = model.create_predictor(batch_size=batch_size)
-            season_length = get_seasonality(dataset.freq)
-
-            # Generate predictions
-            data_type = "validation" if use_val else "test"
-            print(f"  Running predictions on {data_type} data...")
-
             try:
-                if use_val:
-                    print("    (No results saved - validation data used for hyperparameter selection)")
+                # Model prediction (this uses GPU memory and may cause OOM)
+                predictor = model.create_predictor(batch_size=batch_size)
+                forecasts = list(predictor.predict(dataset.test_data.input))
+                fc_samples = []
+                for fc in forecasts:
+                    fc_samples.append(fc.samples[np.newaxis, ...])
+                fc_samples = np.concatenate(fc_samples, axis=0)  # (num_total_instances, num_samples, prediction_length) or (num_total_instances, num_samples, prediction_length, num_variates)
+
+                # Convert samples to quantiles
+                quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+                quantile_levels_array = np.array(quantile_levels, dtype=float)
+
+                # Compute quantiles along the num_samples dimension (axis=1)
+                if fc_samples.ndim == 3:
+                    # Univariate case: (num_total_instances, num_samples, prediction_length)
+                    # Result: (num_total_instances, num_quantiles, prediction_length)
+                    fc_quantiles = np.quantile(fc_samples, quantile_levels_array, axis=1)
+                    # np.quantile returns (num_quantiles, num_total_instances, prediction_length), need to transpose
+                    fc_quantiles = fc_quantiles.transpose(1, 0, 2)
+                elif fc_samples.ndim == 4:
+                    # Multivariate case: (num_total_instances, num_samples, prediction_length, num_variates)
+                    # Result: (num_total_instances, num_quantiles, num_variates, prediction_length)
+                    fc_quantiles = np.quantile(fc_samples, quantile_levels_array, axis=1)
+                    # np.quantile returns (num_quantiles, num_total_instances, prediction_length, num_variates), need to transpose
+                    fc_quantiles = fc_quantiles.transpose(1, 0, 3, 2)
                 else:
-                    # Save predictions and metrics for test data
-                    ds_config = f"{dataset_name}/{term}"
+                    raise ValueError(f"Unexpected fc_samples shape: {fc_samples.shape}")
 
-                    # Prepare model hyperparameters for metadata
-                    # Note: num_samples is stored in predictions.npz, not in metadata.json
-                    model_hyperparams = {
-                        "patch_size": patch_size,
-                        "context_length": context_length,
-                        "mode": mode_name,
-                    }
+                season_length = get_seasonality(dataset.freq)
 
-                    metadata = save_window_predictions(
-                        dataset=dataset,
-                        predictor=predictor,
-                        ds_config=ds_config,
-                        output_base_dir=output_dir,
-                        seasonality=season_length,
-                        model_hyperparams=model_hyperparams,
-                    )
-                    print(f"  Completed: {metadata['num_series']} series × {metadata['num_windows']} windows")
-                    print(f"  Output: {metadata.get('output_dir', output_dir)}")
+                # Save predictions and metrics for test data
+                ds_config = f"{dataset_name}/{term}"
+
+                # Prepare model hyperparameters for metadata
+                # Note: num_samples is stored in predictions.npz, not in metadata.json
+                model_hyperparams = {
+                    "patch_size": patch_size,
+                    "context_length": context_length,
+                    "mode": mode_name,
+                }
+
+                metadata = save_window_predictions(
+                    dataset=dataset,
+                    fc_quantiles=fc_quantiles,
+                    ds_config=ds_config,
+                    output_base_dir=output_dir,
+                    seasonality=season_length,
+                    model_hyperparams=model_hyperparams,
+                    quantile_levels=quantile_levels,
+                )
+                print(f"  Completed: {metadata['num_series']} series × {metadata['num_windows']} windows")
+                print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
                 # Success - break out of the retry loop
                 break
@@ -228,7 +220,7 @@ def run_moirai_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Moirai experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["US_Term_Structure/B"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["Port_Activity/W"],
                         help="Dataset name(s). Can be a single dataset, multiple datasets, or 'all_datasets' to run all datasets from config")
     parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"],
@@ -244,12 +236,8 @@ def main():
                         help="Number of samples for probabilistic forecasting")
     parser.add_argument("--context-length", type=int, default=4000,
                         help="Maximum context length")
-    parser.add_argument("--cuda-device", type=str, default="0",
-                        help="CUDA device ID")
     parser.add_argument("--config", type=str, default=None,
                         help="Path to datasets.yaml config file")
-    parser.add_argument("--val", action="store_true",
-                        help="Evaluate on validation data (for hyperparameter selection, no saving)")
 
     args = parser.parse_args()
 
@@ -282,9 +270,7 @@ def main():
                 batch_size=args.batch_size,
                 num_samples=args.num_samples,
                 context_length=args.context_length,
-                cuda_device=args.cuda_device,
-                config_path=config_path,
-                use_val=args.val,
+                config_path=config_path
             )
         except Exception as e:
             print(f"ERROR: Failed to run experiment for {dataset_name}: {e}")

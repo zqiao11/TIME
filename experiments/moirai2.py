@@ -7,7 +7,6 @@ Usage:
     python experiments/moriai2.py --dataset "Coastal_T_S/5T" --terms short medium long
     python experiments/moriai2.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/moriai2.py --dataset all_datasets  # Run all datasets from config
-    python experiments/moriai2.py --val  # Evaluate on validation data (no saving)
 """
 
 import argparse
@@ -24,7 +23,8 @@ from gluonts.time_feature import get_seasonality
 # Strict import based on your demo
 from uni2ts.model.moirai2 import Moirai2Forecast, Moirai2Module
 
-from timebench.evaluation.saver import save_window_quantile_predictions
+from timebench.evaluation.saver import save_window_predictions
+from timebench.evaluation.utils import get_available_terms
 from timebench.evaluation.data import (
     Dataset,
     get_dataset_settings,
@@ -34,80 +34,16 @@ from timebench.evaluation.data import (
 load_dotenv()
 
 
-def _impute_nans_1d(series: np.ndarray) -> np.ndarray:
-    series = series.astype(np.float32, copy=False)
-    if not np.isnan(series).any():
-        return series
-    idx = np.arange(series.shape[0])
-    mask = np.isfinite(series)
-    if mask.sum() == 0:
-        return np.nan_to_num(series, nan=0.0)
-    series[~mask] = np.interp(idx[~mask], idx[mask], series[mask])
-    return series
-
-
-def _clean_nan_target(series: np.ndarray) -> np.ndarray:
-    if series.ndim == 1:
-        return _impute_nans_1d(series)
-    if series.ndim == 2:
-        cleaned = np.empty_like(series, dtype=np.float32)
-        for i in range(series.shape[0]):
-            cleaned[i] = _impute_nans_1d(series[i])
-        return cleaned
-    return np.nan_to_num(series, nan=0.0)
-
-
-def _prepare_entry(entry: dict, context_length: int | None) -> dict:
-    target = np.asarray(entry["target"], dtype=np.float32)
-    if target.ndim == 2 and target.shape[0] > target.shape[1]:
-        target = target.T
-    if context_length is not None and target.shape[-1] > context_length:
-        target = target[..., -context_length:]
-    target = _clean_nan_target(target)
-
-    cleaned = dict(entry)
-    cleaned["target"] = target
-
-    for key in ("past_feat_dynamic_real", "feat_dynamic_real"):
-        if key not in cleaned:
-            continue
-        feat = np.asarray(cleaned[key], dtype=np.float32)
-        if feat.ndim == 2 and feat.shape[0] > feat.shape[1]:
-            feat = feat.T
-        if context_length is not None and feat.shape[-1] > context_length:
-            feat = feat[..., -context_length:]
-        cleaned[key] = feat
-
-    return cleaned
-
-
-def get_available_terms(dataset_name: str, config: dict) -> list[str]:
-    """Get the terms that are actually defined in the config for a dataset."""
-    datasets_config = config.get("datasets", {})
-    if dataset_name not in datasets_config:
-        return []
-    dataset_config = datasets_config[dataset_name]
-    available_terms = []
-    for term in ["short", "medium", "long"]:
-        if term in dataset_config and dataset_config[term].get("prediction_length") is not None:
-            available_terms.append(term)
-    return available_terms
-
-
 def run_moirai2_experiment(
-    dataset_name: str = "TSBench_IMOS_v2/15T",
+    dataset_name: str,
     terms: list[str] = None,
     model_size: str = "base",
     output_dir: str | None = None,
     batch_size: int = 16,
     context_length: int = 1680,
-    cuda_device: str = "0",
     config_path: Path | None = None,
-    use_val: bool = False,
     quantile_levels: list[float] | None = None,
 ):
-    os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
-
     print("Loading configuration...")
     config = load_dataset_config(config_path)
 
@@ -137,7 +73,7 @@ def run_moirai2_experiment(
     print(f"Model: {hf_model_path}, Total parameters: {total_params:,}")
 
     if output_dir is None:
-        output_dir = f"./output/results/moirai2_{model_size_used}"
+        output_dir = f"./output/results/moirai2_{model_size_used}_New"
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -182,10 +118,7 @@ def run_moirai2_experiment(
             past_feat_dynamic_real_dim=0,
         )
 
-        if use_val:
-            num_windows = dataset.val_windows
-        else:
-            num_windows = dataset.windows
+        num_windows = dataset.windows
 
         print("  Dataset info:")
         print(f"    - Frequency: {dataset.freq}")
@@ -194,35 +127,37 @@ def run_moirai2_experiment(
         print(f"    - Prediction length: {dataset.prediction_length}")
         print(f"    - Windows: {num_windows}")
 
-        predictor = model.create_predictor(batch_size=batch_size)
-        season_length = get_seasonality(dataset.freq)
 
         print(f"  Running predictions...")
-        # processed_inputs = [_prepare_entry(entry, context_length) for entry in dataset.test_data.input]
-        # forecasts = list(predictor.predict(processed_inputs))
+        predictor = model.create_predictor(batch_size=batch_size)
+        test_data = dataset.test_data
+        forecasts = list(predictor.predict(test_data.input))
+        fc_quantiles = []
+        for fc in forecasts:
+            fc_quantiles.append(fc.forecast_array[np.newaxis, ...])
+        fc_quantiles = np.concatenate(fc_quantiles, axis=0)  # (num_total_instances, num_quantiles, prediction_length)
 
-        if use_val:
-            print("    (No results saved - validation data used for hyperparameter selection)")
-        else:
-            ds_config = f"{dataset_name}/{term}"
-            model_hyperparams = {
-                "model_version": "2.0",
-                "model_size": model_size_used,
-                "context_length": context_length,
-                "quantile_levels": quantile_levels,
-            }
+        season_length = get_seasonality(dataset.freq)
 
-            metadata = save_window_quantile_predictions(
-                dataset=dataset,
-                predictor=predictor,
-                ds_config=ds_config,
-                output_base_dir=output_dir,
-                seasonality=season_length,
-                model_hyperparams=model_hyperparams,
-                quantile_levels=quantile_levels,
-            )
-            print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
-            print(f"  Output: {metadata.get('output_dir', output_dir)}")
+        ds_config = f"{dataset_name}/{term}"
+        model_hyperparams = {
+            "model_version": "2.0",
+            "model_size": model_size_used,
+            "context_length": context_length,
+            "quantile_levels": quantile_levels,
+        }
+
+        metadata = save_window_predictions(
+            dataset=dataset,
+            fc_quantiles=fc_quantiles,
+            ds_config=ds_config,
+            output_base_dir=output_dir,
+            seasonality=season_length,
+            model_hyperparams=model_hyperparams,
+            quantile_levels=quantile_levels,
+        )
+        print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
+        print(f"  Output: {metadata.get('output_dir', output_dir)}")
 
     print(f"\n{'='*60}")
     print("All experiments completed!")
@@ -232,7 +167,7 @@ def run_moirai2_experiment(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Moirai-2.0 experiments")
-    parser.add_argument("--dataset", type=str, nargs="+", default=["ECDC_COVID/D"],
+    parser.add_argument("--dataset", type=str, nargs="+", default=["Global_Influenza/W"],
                         help="Dataset name(s)")
     parser.add_argument("--terms", type=str, nargs="+", default=None,
                         choices=["short", "medium", "long"], help="Terms to evaluate. If not specified, auto-detect from config.")
@@ -248,9 +183,7 @@ def main():
         help="Quantile levels to predict",
     )
     parser.add_argument("--context-length", type=int, default=4000, help="Max context length")
-    parser.add_argument("--cuda-device", type=str, default="0", help="CUDA device ID")
     parser.add_argument("--config", type=str, default=None, help="Path to datasets.yaml")
-    parser.add_argument("--val", action="store_true", help="Evaluate on validation data")
 
     args = parser.parse_args()
     config_path = Path(args.config) if args.config else None
@@ -274,9 +207,7 @@ def main():
                 output_dir=args.output_dir,
                 batch_size=args.batch_size,
                 context_length=args.context_length,
-                cuda_device=args.cuda_device,
                 config_path=config_path,
-                use_val=args.val,
                 quantile_levels=args.quantiles,
             )
         except Exception as e:
