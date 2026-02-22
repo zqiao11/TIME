@@ -1,5 +1,6 @@
 """
 Toto model experiments for time series forecasting.
+Reference: https://github.com/DataDog/toto/blob/main/toto/notebooks/inference_tutorial.ipynb
 
 Usage:
     python experiments/toto_model.py
@@ -215,10 +216,6 @@ def run_toto_experiment(
                     q_preds.append(q_pred)
 
                 fc_quantiles.append(np.stack(q_preds, axis=0))
-
-                # Clear GPU cache to reduce memory fragmentation
-                if device == "cuda":
-                    torch.cuda.empty_cache()
 
                 if idx % 100 == 0:
                     print(f"    Processed {idx} windows")

@@ -134,7 +134,7 @@ class Dataset:
         prediction_length: Optional[int] = None,
         test_length: int = None,
         val_length: int = 0,
-        storage_env_var: str = "GIFT_EVAL",
+        storage_env_var: str = "TIME_DATASET",
         storage_path: Optional[str | Path] = None,
     ):
         """
