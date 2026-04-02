@@ -251,7 +251,7 @@ def main():
                         help="PatchTST-FM model size (use 'patchtst-fm-r1' for ibm-research/patchtst-fm-r1)")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Output directory for results")
-    parser.add_argument("--batch-size", type=int, default=2048,
+    parser.add_argument("--batch-size", type=int, default=32,
                         help="Batch size for prediction")
     parser.add_argument(
         "--quantiles",
