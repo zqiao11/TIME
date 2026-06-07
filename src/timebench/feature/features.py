@@ -13,6 +13,10 @@ from scipy.stats import kurtosis
 from scipy.stats import shapiro
 from multiprocessing import Pool
 from collections import ChainMap
+from statsmodels.tsa.seasonal import MSTL
+
+
+
 
 warnings.filterwarnings("ignore")
 
@@ -515,5 +519,190 @@ def extended_stl_features(x: np.array, freq: int = 1) -> Dict[str, float]:
         output['seasonal_corr'] = seasonal_corr
         output['seasonal_lumpiness'] = seasonal_lumpiness
         output['seasonal_entropy'] = seasonal_entropy
+
+    return output
+
+
+def extended_mstl_features(x: np.array, freq: int = 1, periods: Optional[List[int]] = None) -> Dict[str, float]:
+    """
+    Calculates extended seasonal-trend features using MSTL (Multiple
+    Seasonal-Trend decomposition using LOESS), supporting multiple
+    seasonal periods simultaneously.
+
+    Parameters
+    ----------
+    x : np.array
+        Time series values (already scaled / preprocessed).
+    freq : int
+        Primary period, used as fallback when *periods* is empty and
+        as the block size for single-period helper features (entropy,
+        stability, hurst, …).
+    periods : list[int] | None
+        Seasonal periods for MSTL (e.g. [7, 30, 365]).  Non-NaN values
+        from the top-3 FFT peaks.  If None or empty, falls back to
+        [freq] when freq > 1.
+    """
+    n = len(x)
+
+    # ── Determine valid periods for MSTL ─────────────────────────────
+    if periods is None or len(periods) == 0:
+        raw_periods = [freq] if freq > 1 else []
+    else:
+        raw_periods = [int(p) for p in periods]
+
+    # MSTL requires period > 1 and at least 2 full cycles
+    valid_periods = sorted(set(p for p in raw_periods if p > 1 and 2 * p <= n))
+
+    # Primary period (= strongest FFT peak, passed via freq by the runner)
+    # used as block size for entropy, stability, hurst, lumpiness, etc.
+    m = max(freq, 1) if freq > 1 else (valid_periods[0] if valid_periods else 1)
+    has_seasonality = len(valid_periods) > 0
+
+    # ── Stationarity (ADF test) ──────────────────────────────────────
+    try:
+        x_clean = x[~np.isnan(x)]
+        if len(x_clean) > 10000:
+            x_clean = x_clean[-10000:]
+        pval = adfuller(x_clean, autolag="AIC", regression='ct')[1]
+        stationarity = 1 if pval <= 0.05 else 0
+    except Exception:
+        stationarity = 1
+
+    # ── Entropy on raw series ────────────────────────────────────────
+    x_entropy = entropy(x, m)['entropy']
+
+    # Helper: NaN-filled output on decomposition failure
+    def _empty_output():
+        out = {
+            'stationarity': stationarity,
+            'x_entropy': x_entropy,
+            'trend_strength': np.nan, 'trend_stability': np.nan,
+            'trend_hurst': np.nan, 'trend_nonlinearity': np.nan,
+            'spike': np.nan, 'linearity': np.nan, 'curvature': np.nan,
+            'e_acf1': np.nan, 'e_diff1_acf1': np.nan, 'e_acf10': np.nan,
+            'e_entropy': np.nan, 'e_arch_lm': np.nan,
+            'e_kurtosis': np.nan, 'e_shapiro_w': np.nan,
+        }
+        if has_seasonality:
+            out.update({
+                'seasonal_strength': np.nan, 'seasonal_corr': np.nan,
+                'seasonal_lumpiness': np.nan, 'seasonal_entropy': np.nan,
+            })
+        return out
+
+    # ── MSTL / trend-only decomposition ──────────────────────────────
+    if has_seasonality:
+        try:
+            mstl_result = MSTL(x, periods=valid_periods).fit()
+            trend0 = np.asarray(mstl_result.trend)
+            remainder = np.asarray(mstl_result.resid)
+            seasonal_raw = mstl_result.seasonal
+            if hasattr(seasonal_raw, 'values'):
+                seasonal_arr = seasonal_raw.values
+            else:
+                seasonal_arr = np.asarray(seasonal_raw)
+            total_seasonal = seasonal_arr.sum(axis=1) if seasonal_arr.ndim > 1 else seasonal_arr
+        except Exception as e:
+            print(f"[MSTL FAIL] periods={valid_periods}, n={n}, m={m}, error={type(e).__name__}: {e}")
+            return _empty_output()
+    else:
+        t = np.arange(n) + 1
+        try:
+            trend0 = SuperSmoother().fit(t, x).predict(t)
+        except Exception as e:
+            print(f"[SuperSmoother FAIL] n={n}, error={type(e).__name__}: {e}")
+            return _empty_output()
+        remainder = x - trend0
+        total_seasonal = np.zeros(n)
+
+    # ── Decomposition statistics ─────────────────────────────────────
+    deseason = x - total_seasonal
+    varx = np.nanvar(x, ddof=1)
+    vare = np.nanvar(remainder, ddof=1)
+    vardeseason = np.nanvar(deseason, ddof=1)
+
+    # Trend strength
+    if varx < 1e-10 or vardeseason / varx < 1e-10:
+        trend = 0
+    else:
+        trend = max(0, min(1, 1 - vare / vardeseason))
+
+    # Seasonal strength (total seasonal from all periods)
+    if has_seasonality:
+        var_resid_seasonal = np.nanvar(remainder + total_seasonal, ddof=1)
+        if varx < 1e-10 or var_resid_seasonal < 1e-10:
+            season = 0
+        else:
+            season = max(0, min(1, 1 - vare / var_resid_seasonal))
+
+    # ── Spike ────────────────────────────────────────────────────────
+    d = (remainder - np.nanmean(remainder)) ** 2
+    varloo = (vare * (n - 1) - d) / (n - 2)
+    spike = np.nanvar(varloo, ddof=1)
+
+    # ── Linearity & Curvature ────────────────────────────────────────
+    time = np.arange(n) + 1
+    try:
+        poly_m = poly(time, 2)
+        time_x = add_constant(poly_m)
+        coefs = OLS(trend0, time_x).fit().params
+        linearity = coefs[1]
+        curvature = -coefs[2]
+    except Exception:
+        linearity = np.nan
+        curvature = np.nan
+
+    # ── Residual features ────────────────────────────────────────────
+    e_acf = fast_acf_features(remainder)
+    e_entropy = entropy(remainder, m)['entropy']
+    e_arch_lm = arch_stat(remainder, m)['arch_lm']
+    e_kurtosis_val = kurtosis(remainder, fisher=True, nan_policy='omit')
+    e_shapiro_w = shapiro(remainder)[0]
+
+    # ── Trend properties ─────────────────────────────────────────────
+    trend_stability = stability(trend0, m)['stability']
+    trend_hurst = hurst(trend0, m)['hurst']
+    trend_nonlinearity = nonlinearity(trend0, m)['nonlinearity']
+
+    # ── Seasonal properties (computed on total seasonal, block = m) ──
+    seasonal_corr = np.nan
+    if has_seasonality:
+        try:
+            S = total_seasonal[:len(total_seasonal) // m * m]
+            segments = S.reshape(-1, m)
+            corrs = [np.corrcoef(segments[i], segments[j])[0, 1]
+                     for i in range(len(segments)) for j in range(i + 1, len(segments))]
+            seasonal_corr = np.mean(corrs) if corrs else np.nan
+        except Exception:
+            seasonal_corr = np.nan
+
+    seasonal_lumpiness = lumpiness(total_seasonal, m)['lumpiness']
+    seasonal_entropy_val = entropy(total_seasonal, m)['entropy']
+
+    # ── Output assembly ──────────────────────────────────────────────
+    output = {
+        'stationarity': stationarity,
+        'x_entropy': x_entropy,
+        'trend_strength': trend,
+        'trend_stability': trend_stability,
+        'trend_hurst': trend_hurst,
+        'trend_nonlinearity': trend_nonlinearity,
+        'spike': spike,
+        'linearity': linearity,
+        'curvature': curvature,
+        'e_acf1': e_acf['x_acf1'],
+        'e_diff1_acf1': e_acf['diff1_acf1'],
+        'e_acf10': e_acf['x_acf10'],
+        'e_entropy': e_entropy,
+        'e_arch_lm': e_arch_lm,
+        'e_kurtosis': e_kurtosis_val,
+        'e_shapiro_w': e_shapiro_w,
+    }
+
+    if has_seasonality:
+        output['seasonal_strength'] = season
+        output['seasonal_corr'] = seasonal_corr
+        output['seasonal_lumpiness'] = seasonal_lumpiness
+        output['seasonal_entropy'] = seasonal_entropy_val
 
     return output

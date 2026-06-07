@@ -18,12 +18,14 @@ import argparse
 import glob
 import os
 import time
+from multiprocessing import Pool
 from pathlib import Path
 
 import pandas as pd
 from tqdm import tqdm
 
 from timebench.feature.features import (
+    extended_mstl_features,
     extended_stl_features,
     preprocess_for_tsfeatures,
     safe_parse_datetime,
@@ -84,6 +86,13 @@ FEATURE_COLUMNS_ORDER = [
     "p_strength2",
     "p_strength3",
 ]
+
+
+def _mstl_worker(args):
+    """Top-level worker for Pool.imap — computes MSTL features for one variate."""
+    uid, ts_values, primary_freq, periods = args
+    feats = extended_mstl_features(ts_values, freq=primary_freq, periods=periods)
+    return pd.DataFrame(feats, index=[uid])
 
 
 def convert_multi_csv_to_panel(
@@ -161,6 +170,7 @@ def compute_dataset_features(
     output_dir: str = "./output",
     test_length: int | None = None,
     split_mode: str = "test",
+    decomp_method: str = "stl",
 ) -> None:
     """
     Compute and save the full set of time series features for a given dataset.
@@ -182,17 +192,20 @@ def compute_dataset_features(
         split_mode: Which portion to compute features on:
             - "full": full series
             - "test": test split only
+        decomp_method: Seasonal-trend decomposition method:
+            - "stl": single-period STL using the strongest FFT period (default)
+            - "mstl": multi-period MSTL using the top-3 FFT periods
 
     Returns:
-        None. Saves features to {output_dir}/features/{dataset}/{freq}/{split_mode}.csv
+        None. Saves features to {output_dir}/{decomp_method}_features/{dataset}/{freq}/{split_mode}.csv
     """
     start = time.time()
 
     # dataset_id for joining with results (format: "{dataset_name}/{freq}")
     dataset_id = f"{dataset_name}/{freq}"
 
-    # Set the directories & paths (format: {dataset}/{freq}/)
-    feature_dir = os.path.join(output_dir, "features", dataset_name, freq)
+    # Set the directories & paths (format: {decomp_method}_features/{dataset}/{freq}/)
+    feature_dir = os.path.join(output_dir, f"{decomp_method}_features", dataset_name, freq)
     os.makedirs(feature_dir, exist_ok=True)
 
     output_csv_path = os.path.join(feature_dir, f'{split_mode}.csv')
@@ -216,16 +229,42 @@ def compute_dataset_features(
     series, stats_df = preprocess_for_tsfeatures(panel, freq=freq)
     assert series['y'].isna().sum() == 0, "There are still NaNs in preprocessed series!"
 
-    # Compute features
-    uid_freq_map = stats_df.set_index('unique_id')['period1'].to_dict()
+    # Compute seasonal-trend decomposition features (trend, seasonal, residual)
+    if decomp_method == "stl":
+        # [STL] Single-period decomposition using the strongest FFT period (period1)
+        uid_freq_map = stats_df.set_index('unique_id')['period1'].to_dict()
+        features_df = tsfeatures_with_uid_freq_map(
+            series,
+            uid_freq_map=uid_freq_map,
+            features=[extended_stl_features],
+            scale=False,
+        )
+    else:
+        # [MSTL] Multi-period decomposition using the top-3 FFT periods per variate
+        uid_periods_map = {}
+        for _, row in stats_df.iterrows():
+            uid = row['unique_id']
+            periods = []
+            for col in ['period1', 'period2', 'period3']:
+                if col in row.index and pd.notna(row[col]):
+                    p = int(row[col])
+                    if p > 1:
+                        periods.append(p)
+            uid_periods_map[uid] = periods
 
-    # Compute STL-based features (trend, seasonal, residual)
-    features_df = tsfeatures_with_uid_freq_map(
-        series,
-        uid_freq_map=uid_freq_map,
-        features=[extended_stl_features],
-        scale=False
-    )
+        mstl_args = []
+        for uid, group in series.groupby('unique_id'):
+            periods = uid_periods_map.get(uid, [])
+            primary_freq = periods[0] if periods else 1
+            mstl_args.append((uid, group['y'].values, primary_freq, periods))
+
+        with Pool() as pool:
+            feature_rows = list(tqdm(
+                pool.imap(_mstl_worker, mstl_args),
+                total=len(mstl_args),
+                desc="Computing MSTL features",
+            ))
+        features_df = pd.concat(feature_rows).rename_axis('unique_id').reset_index()
 
     # Merge all features
     features_df = features_df.merge(stats_df, on='unique_id', how='left')
@@ -280,6 +319,9 @@ Examples:
 
     # Compute features on full series instead of last test_length timesteps
     python -m timebench.feature.features_runner --dataset Water_Quality_Darwin/15T --split full
+
+    # Use multi-period MSTL decomposition instead of the default single-period STL
+    python -m timebench.feature.features_runner --dataset Water_Quality_Darwin/15T --decomp mstl
         """
     )
     parser.add_argument(
@@ -299,6 +341,13 @@ Examples:
         default="test",
         choices=["full", "test"],
         help="Which portion to compute features on: 'full', 'test'"
+    )
+    parser.add_argument(
+        "--decomp",
+        type=str,
+        default="stl",
+        choices=["stl", "mstl"],
+        help="Seasonal-trend decomposition method: 'stl' (single period, default) or 'mstl' (multiple periods)"
     )
     parser.add_argument(
         "--config",
@@ -362,6 +411,7 @@ Examples:
                 output_dir=args.output_dir,
                 test_length=test_length,
                 split_mode=effective_split_mode,
+                decomp_method=args.decomp,
             )
 
 
@@ -403,6 +453,7 @@ Examples:
             output_dir=args.output_dir,
             test_length=test_length,
             split_mode=effective_split_mode,
+            decomp_method=args.decomp,
         )
     else:
         parser.print_help()
