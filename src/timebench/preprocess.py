@@ -706,7 +706,7 @@ def main():
     parser.add_argument("--dataset", type=str, help="Dataset name")
     parser.add_argument("--freq", type=str, default=None, help="Time series frequency (e.g., '5T')")
     parser.add_argument("--missing_rate_thresh", type=float, default=0.3)
-    parser.add_argument("--output_dir", type=str, default="./data_cleaned")
+    parser.add_argument("--output_dir", type=str, default="./data")
 
     # Cleanup arguments
     parser.add_argument("--remove_variate", type=str, default=None, help="Comma-separated variates to remove")

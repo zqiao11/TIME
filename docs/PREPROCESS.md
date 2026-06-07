@@ -152,6 +152,6 @@ After executing a cleanup command, the pipeline automatically synchronizes your 
 
 ## 6. Next Steps
 
-* Proceed to convert the cleaned CSVs into Arrow formats (see [DATA_FORMAT.md](./DATA_FORMAT.md)).
+* Proceed to convert the cleaned CSVs into Arrow formats (see [DATA_FORMAT.md](./DATASET_FORMAT.md)).
 
 * Extract time series features using the `features_runner.py` module (see [FEATURES.md](./FEATURES.md)).
