@@ -104,5 +104,4 @@ hf_models/
 experiments/Kairos/
 granite-tsfm/
 local_tools/
-scripts/run_toto_2.sh
-scripts/run_toto_3.sh
+config/

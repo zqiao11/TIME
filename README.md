@@ -1,4 +1,4 @@
-# It's TIME: Towards the Next Generation of Time Series Forecasting Benchmarks
+# [ICML 2026] It's TIME: Towards the Next Generation of Time Series Forecasting Benchmarks
 
 
 [![arXiv](https://img.shields.io/badge/arxiv-2602.12147-b31b1b.svg)](https://arxiv.org/abs/2602.12147)
@@ -12,16 +12,22 @@ TIME is a task-centric time series forecasting benchmark comprising various fres
 
 ## 📅 Update Log
 
-### 2026 Feb 27:
-* Official release of our TIME codebase.
-* Clean features and ProcessedCSV on HuggingFace.
+### 2026 June
+* Release the camera-ready version on [arxiv](https://arxiv.org/abs/2602.12147) and [OpenReview](https://openreview.net/forum?id=79TgfXHbsK).
+* Add MSTL as an option for tsfeature computation (STL remains the default, as used in the paper).
 
-### 2026 Feb 22:
-* Leaderboard Results Updates:
+### 2026 May
+* 🎉 Our paper is accepted by ICML 2026!
+* Update the datasets and leaderboard:
+   * Update the dataset license to CC BY-NC 4.0 to ensure compliance with all constituent data providers.
+   * Update Crypto/D. Update data with public market aggregates.
+   * Update Global_Influenza/W. Fix the bug reported in [Issue #5](https://github.com/zqiao11/TIME/issues/5).
+
+### 2026 Feb
+* Official release of our TIME codebase. Clean features and ProcessedCSV on HuggingFace.
+* Leaderboard results updates:
   * **Chronos2 & Chronos-bolt**: Integrate updates from [PR#2](https://github.com/zqiao11/TIME/pull/2).
-  * **TiRex**: Integrate updates from [PR#3](https://github.com/zqiao11/TIME/pull/3)
-
-### 2026 Feb 12:
+  * **TiRex**: Integrate updates from [PR#3](https://github.com/zqiao11/TIME/pull/3).
 * First release of our [arxiv paper](https://arxiv.org/abs/2602.12147) and [leaderboard](https://huggingface.co/spaces/Real-TSF/TIME-leaderboard).
 
 
