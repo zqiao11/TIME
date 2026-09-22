@@ -44,6 +44,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# t0-beta inference runtime
+t0 = [
+    "tfc-t0==0.5.0",
+]
+
 # Statistical models (Seasonal Naive, etc.)
 stats = [
     "statsforecast>=1.7.0",
@@ -67,6 +72,7 @@ dev = [
 
 # All optional dependencies
 all = [
+    "timebench[t0]",
     "timebench[stats]",
     "timebench[train]",
     "timebench[dev]",
