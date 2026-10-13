@@ -49,6 +49,11 @@ t0 = [
     "tfc-t0==0.5.0",
 ]
 
+# t0-gamma requires the PyTorch runtime and the checkpoint conventions from 0.6.0.
+t0-gamma = [
+    "tfc-t0[torch]>=0.6.0,<0.7",
+]
+
 # Statistical models (Seasonal Naive, etc.)
 stats = [
     "statsforecast>=1.7.0",
@@ -72,7 +77,7 @@ dev = [
 
 # All optional dependencies
 all = [
-    "timebench[t0]",
+    "timebench[t0]",  # t0-gamma is mutually exclusive with t0-beta's 0.5.0 pin.
     "timebench[stats]",
     "timebench[train]",
     "timebench[dev]",
@@ -81,6 +86,13 @@ all = [
 [project.urls]
 Homepage = "https://github.com/yourusername/TIME"
 Repository = "https://github.com/yourusername/TIME"
+
+# t0-beta and t0-gamma require incompatible versions of the inference runtime.
+[tool.uv]
+conflicts = [
+    [{ extra = "t0" }, { extra = "t0-gamma" }],
+    [{ extra = "all" }, { extra = "t0-gamma" }],
+]
 
 # --- Hatch Specific Configurations ---
 
