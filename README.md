@@ -68,6 +68,18 @@ nohup bash scripts/run_chronos2.sh > run_chronos2.txt 2>&1 &
 
 For each task, window-level predictions (quantiles) and metrics will be saved in `output/results/{model_name}/{dataset}/{freq}/{term}/`.
 
+### Reproduce t0-gamma results
+
+The `t0-gamma` results use the PyTorch runtime (`tfc-t0>=0.6.0`).
+
+```bash
+export TIME_DATASET=/path/to/Real-TSF/TIME
+bash scripts/run_t0_gamma.sh                # all 98 configured tasks
+# Or select a task: bash scripts/run_t0_gamma.sh --dataset Coastal_T_S/20T --terms short
+```
+
+Outputs go to the git-ignored `output/results/t0_gamma/`. To submit them to the leaderboard, follow [Submit Results to TIME Leaderboard](#submit-results-to-time-leaderboard) below, using `model_name = "t0_gamma"` and `path_in_repo = "results/t0_gamma"`. Do not commit prediction files to this code repository.
+
 ### Compute Overall Metrics
 
 Once the evaluations are complete, use the following script to aggregate the raw outputs into the overall metrics in leaderboard. This process automatically fetches the Seasonal Naive results from Hugging Face and computes the aggregated metrics across all tasks.
