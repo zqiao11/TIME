@@ -10,6 +10,12 @@ Usage:
     python experiments/seasonal_naive.py --dataset "SG_Weather/D" --terms short medium long
     python experiments/seasonal_naive.py --dataset "SG_Weather/D" "SG_PM25/H"  # Multiple datasets
     python experiments/seasonal_naive.py --dataset all_datasets  # Run all datasets from config
+
+Note:
+    Quantiles are taken directly from statsforecast, so results are deterministic.
+    The hosted seasonal_naive baseline was computed with the earlier unseeded
+    sampling; for exact leaderboard parity, use the hosted results.
+    See https://github.com/zqiao11/TIME/issues/12.
 """
 
 import argparse
@@ -128,19 +134,9 @@ def run_seasonal_naive_experiment(
         # Generate predictions
         forecasts = list(predictor.predict(eval_data.input))
 
-        fc_samples = []
-        for fc in forecasts:
-            fc_samples.append(fc.samples[np.newaxis, ...])
-        fc_samples = np.concatenate(fc_samples, axis=0)  # (num_total_instances, num_samples, 1, prediction_length)
-
-        # Convert samples to quantiles
-        quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-        quantile_levels_array = np.array(quantile_levels, dtype=float)
-
-        fc_quantiles = np.quantile(fc_samples, quantile_levels_array, axis=1)
-        # np.quantile returns (num_quantiles, num_total_instances, 1, prediction_length), need to transpose
-        fc_quantiles = fc_quantiles.transpose(1, 0, 2, 3)  # (num_total_instances, num_quantiles, 1, prediction_length)
-        fc_quantiles = fc_quantiles.squeeze(axis=2)
+        quantile_levels = predictor.quantile_levels
+        fc_quantiles = np.stack([fc.quantiles for fc in forecasts], axis=0)  # (N, Q, 1, H)
+        fc_quantiles = fc_quantiles.squeeze(axis=2)  # (N, Q, H)
 
         # Compute metrics
         ds_config = f"{dataset_name}/{term}"
@@ -157,6 +153,7 @@ def run_seasonal_naive_experiment(
             output_base_dir=output_dir,
             seasonality=season_length,
             model_hyperparams=model_hyperparams,
+            quantile_levels=quantile_levels,
         )
         print(f"  Completed: {metadata['num_series']} series x {metadata['num_windows']} windows")
         print(f"  Output: {metadata.get('output_dir', output_dir)}")

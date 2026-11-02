@@ -86,17 +86,8 @@ class SeasonalNaiveForecast:
         """
         self.quantile_levels = sorted(quantile_levels)
         self.quantile_forecasts = quantile_forecasts
-
-        # Get shape from any quantile forecast
-        sample_forecast = list(quantile_forecasts.values())[0]
-        if sample_forecast.ndim == 1:
-            sample_forecast = sample_forecast[np.newaxis, :]
-        num_variates, pred_len = sample_forecast.shape
-
-        # Generate samples from quantile forecasts
-        self._samples = self._generate_samples_from_quantiles(
-            quantile_forecasts, quantile_levels, num_samples, num_variates, pred_len
-        )
+        self.num_samples = num_samples
+        self._samples = None
 
     def _generate_samples_from_quantiles(
         self,
@@ -140,14 +131,30 @@ class SeasonalNaiveForecast:
         return samples
 
     @property
+    def quantiles(self) -> np.ndarray:
+        """Return quantile forecasts with shape (num_quantiles, num_variates, pred_len)."""
+        quantile_values = []
+        for q in self.quantile_levels:
+            qf = self.quantile_forecasts[q]
+            if qf.ndim == 1:
+                qf = qf[np.newaxis, :]
+            quantile_values.append(qf)
+        return np.stack(quantile_values, axis=0)
+
+    @property
     def samples(self) -> np.ndarray:
         """Return forecast samples with shape (num_samples, num_variates, pred_len)."""
+        if self._samples is None:
+            _, num_variates, pred_len = self.quantiles.shape
+            self._samples = self._generate_samples_from_quantiles(
+                self.quantile_forecasts, self.quantile_levels, self.num_samples, num_variates, pred_len
+            )
         return self._samples
 
     @property
     def mean(self) -> np.ndarray:
         """Return mean forecast with shape (num_variates, pred_len)."""
-        return np.mean(self._samples, axis=0)
+        return np.mean(self.samples, axis=0)
 
     @property
     def median(self) -> np.ndarray:
@@ -157,7 +164,7 @@ class SeasonalNaiveForecast:
             if median.ndim == 1:
                 median = median[np.newaxis, :]
             return median
-        return np.median(self._samples, axis=0)
+        return np.median(self.samples, axis=0)
 
 
 class SeasonalNaivePredictor:
